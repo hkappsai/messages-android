@@ -26,49 +26,117 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:elevation="8dp"
         android:background="?android:attr/colorBackground"
-        android:gravity="bottom"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="6dp">
+        android:elevation="8dp"
+        android:orientation="vertical">
 
-        <EditText
-            android:id="@+id/input"
-            android:layout_width="0dp"
+        <!-- Files waiting to be sent, with an x to remove each one. -->
+        <HorizontalScrollView
+            android:id="@+id/pending_scroll"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="@string/type_message"
-            android:importantForAutofill="no"
-            android:inputType="textCapSentences|textMultiLine|textShortMessage"
-            android:maxLines="6"
-            android:minHeight="48dp" />
+            android:scrollbars="none"
+            android:visibility="gone">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/counter"
+            <LinearLayout
+                android:id="@+id/pending"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="2dp"
-                android:textColor="?android:attr/textColorSecondary"
-                android:textSize="11sp"
-                android:visibility="gone" />
+                android:orientation="horizontal"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="8dp" />
+        </HorizontalScrollView>
+
+        <!-- Shown while recording a voice memo. -->
+        <LinearLayout
+            android:id="@+id/recording_bar"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/recording_time"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/failed"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/recording_cancel"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@android:string/cancel" />
 
             <ImageButton
-                android:id="@+id/send"
+                android:id="@+id/recording_send"
                 android:layout_width="44dp"
                 android:layout_height="44dp"
-                android:layout_marginBottom="2dp"
                 android:contentDescription="@string/send"
                 android:src="@drawable/ic_send" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/compose_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="bottom"
+            android:orientation="horizontal"
+            android:paddingStart="4dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="6dp">
+
+            <ImageButton
+                android:id="@+id/attach"
+                android:layout_width="44dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/attach"
+                android:src="@drawable/ic_attach"
+                android:tint="?android:attr/textColorSecondary" />
+
+            <EditText
+                android:id="@+id/input"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="@string/type_message"
+                android:importantForAutofill="no"
+                android:inputType="textCapSentences|textMultiLine|textShortMessage"
+                android:maxLines="6"
+                android:minHeight="48dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/counter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/send"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginBottom="2dp"
+                    android:contentDescription="@string/send"
+                    android:src="@drawable/ic_send" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

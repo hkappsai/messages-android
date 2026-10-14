@@ -26,7 +26,7 @@ import java.util.Locale;
 /** Finds messages by their text. */
 public class SearchActivity extends BaseActivity {
 
-    private final List<Sms> results = new ArrayList<>();
+    private final List<Message> results = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable search = this::search;
     private int generation;
@@ -35,14 +35,14 @@ public class SearchActivity extends BaseActivity {
     private EditText query;
     private TextView emptyText;
     private ResultAdapter adapter;
-    private SmsReader reader;
+    private MessageReader reader;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_search);
         showUpButton();
-        reader = new SmsReader(this);
+        reader = new MessageReader(this);
 
         query = findViewById(R.id.query);
         emptyText = findViewById(R.id.empty_text);
@@ -53,7 +53,7 @@ public class SearchActivity extends BaseActivity {
         list.setAdapter(adapter);
         list.setEmptyView(findViewById(R.id.empty));
         list.setOnItemClickListener((parent, view, position, id) -> {
-            Sms sms = results.get(position);
+            Message sms = results.get(position);
             startActivity(new Intent(this, ThreadActivity.class)
                     .putExtra(ThreadActivity.EXTRA_THREAD_ID, sms.threadId)
                     .putExtra(ThreadActivity.EXTRA_MESSAGE_ID, sms.id));
@@ -79,7 +79,7 @@ public class SearchActivity extends BaseActivity {
             return;
         }
         executor.execute(() -> {
-            List<Sms> found = reader.search(text);
+            List<Message> found = reader.search(text);
             onUi(() -> {
                 if (current != generation) return;  // The user kept typing.
                 shownQuery = text;
@@ -110,7 +110,7 @@ public class SearchActivity extends BaseActivity {
 
     private class ResultAdapter extends BaseAdapter {
         @Override public int getCount() { return results.size(); }
-        @Override public Sms getItem(int position) { return results.get(position); }
+        @Override public Message getItem(int position) { return results.get(position); }
         @Override public long getItemId(int position) { return results.get(position).id; }
 
         @Override
@@ -118,8 +118,9 @@ public class SearchActivity extends BaseActivity {
             View view = convertView != null ? convertView
                     : LayoutInflater.from(parent.getContext())
                             .inflate(R.layout.item_conversation, parent, false);
-            Sms sms = getItem(position);
-            MainActivity.bindConversation(view, look, sms, false);
+            Message sms = getItem(position);
+            String title = sms.senderName != null ? sms.senderName : sms.address;
+            MainActivity.bindConversation(view, look, title, sms.address, false, sms, 0, false);
             TextView snippet = view.findViewById(R.id.snippet);
             snippet.setText(highlight(sms.body, shownQuery));
             return view;

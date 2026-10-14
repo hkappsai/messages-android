@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
 
+import java.util.Arrays;
+
 /** Handles the "Reply" and "Mark as read" buttons on a notification. */
 public class ReplyReceiver extends BroadcastReceiver {
 
@@ -17,7 +19,7 @@ public class ReplyReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         long threadId = intent.getLongExtra(ThreadActivity.EXTRA_THREAD_ID, -1);
-        String address = intent.getStringExtra(ThreadActivity.EXTRA_ADDRESS);
+        String[] addresses = intent.getStringArrayExtra(ThreadActivity.EXTRA_ADDRESSES);
         CharSequence reply = null;
         if (ACTION_REPLY.equals(intent.getAction())) {
             Bundle results = RemoteInput.getResultsFromIntent(intent);
@@ -29,8 +31,8 @@ public class ReplyReceiver extends BroadcastReceiver {
         PendingResult result = goAsync();
         new Thread(() -> {
             try {
-                if (!TextUtils.isEmpty(text) && !TextUtils.isEmpty(address)) {
-                    SmsWriter.send(app, address, text);
+                if (!TextUtils.isEmpty(text) && addresses != null && addresses.length > 0) {
+                    Sender.send(app, Arrays.asList(addresses), text);
                 }
                 if (threadId != -1) SmsWriter.markRead(app, threadId);
             } finally {

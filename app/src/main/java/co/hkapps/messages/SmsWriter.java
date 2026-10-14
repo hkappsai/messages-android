@@ -1,6 +1,5 @@
 package co.hkapps.messages;
 
-import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
@@ -69,7 +68,7 @@ public final class SmsWriter {
         PendingIntent sentIntent = PendingIntent.getBroadcast(context, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        SmsManager manager = smsManager(context);
+        SmsManager manager = smsManager(context, -1);
         ArrayList<String> parts = manager.divideMessage(body);
         ArrayList<PendingIntent> sentIntents = new ArrayList<>();
         for (int i = 0; i < parts.size(); i++) sentIntents.add(sentIntent);
@@ -81,12 +80,6 @@ public final class SmsWriter {
         }
     }
 
-    /** Deletes a failed message and sends its text again. */
-    public static void resend(Context context, Sms sms) {
-        deleteMessage(context, sms.id);
-        send(context, sms.address, sms.body);
-    }
-
     /** Changes a message's type. With onlyIfType set, rows of another type stay as they are. */
     static void setType(Context context, Uri row, int type, Integer onlyIfType) {
         ContentValues values = new ContentValues();
@@ -96,52 +89,59 @@ public final class SmsWriter {
     }
 
     public static void markRead(Context context, long threadId) {
-        ContentValues values = new ContentValues();
-        values.put(Telephony.Sms.READ, 1);
-        values.put(Telephony.Sms.SEEN, 1);
-        safeUpdate(context.getContentResolver(), values,
-                Telephony.Sms.THREAD_ID + " = ? AND " + Telephony.Sms.READ + " = 0",
-                new String[]{String.valueOf(threadId)});
+        String[] args = {String.valueOf(threadId)};
+        safeUpdate(context, Telephony.Sms.CONTENT_URI, readValues(),
+                Telephony.Sms.THREAD_ID + " = ? AND " + Telephony.Sms.READ + " = 0", args);
+        safeUpdate(context, Telephony.Mms.CONTENT_URI, readValues(),
+                Telephony.Mms.THREAD_ID + " = ? AND " + Telephony.Mms.READ + " = 0", args);
     }
 
     public static void markAllRead(Context context) {
-        ContentValues values = new ContentValues();
-        values.put(Telephony.Sms.READ, 1);
-        values.put(Telephony.Sms.SEEN, 1);
-        safeUpdate(context.getContentResolver(), values, Telephony.Sms.READ + " = 0", null);
+        safeUpdate(context, Telephony.Sms.CONTENT_URI, readValues(), Telephony.Sms.READ + " = 0", null);
+        safeUpdate(context, Telephony.Mms.CONTENT_URI, readValues(), Telephony.Mms.READ + " = 0", null);
     }
 
+    private static ContentValues readValues() {
+        ContentValues values = new ContentValues();
+        values.put("read", 1);
+        values.put("seen", 1);
+        return values;
+    }
+
+    /** Deletes every SMS and MMS in a conversation. */
     public static void deleteThread(Context context, long threadId) {
         try {
-            context.getContentResolver().delete(Telephony.Sms.CONTENT_URI,
-                    Telephony.Sms.THREAD_ID + " = ?", new String[]{String.valueOf(threadId)});
+            context.getContentResolver().delete(
+                    ContentUris.withAppendedId(Telephony.Threads.CONTENT_URI, threadId), null, null);
         } catch (RuntimeException ignored) {
             // Not the default SMS app: nothing to delete.
         }
     }
 
-    public static void deleteMessage(Context context, long id) {
+    public static void deleteMessage(Context context, Message message) {
+        Uri base = message.mms ? Telephony.Mms.CONTENT_URI : Telephony.Sms.CONTENT_URI;
         try {
-            context.getContentResolver().delete(
-                    ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id), null, null);
+            context.getContentResolver().delete(ContentUris.withAppendedId(base, message.id), null, null);
         } catch (RuntimeException ignored) {
             // Not the default SMS app.
         }
     }
 
-    private static void safeUpdate(ContentResolver resolver, ContentValues values, String where, String[] args) {
+    private static void safeUpdate(Context context, Uri uri, ContentValues values, String where, String[] args) {
         try {
-            resolver.update(Telephony.Sms.CONTENT_URI, values, where, args);
+            context.getContentResolver().update(uri, values, where, args);
         } catch (RuntimeException ignored) {
             // Not the default SMS app.
         }
     }
 
+    /** The SmsManager for a SIM, or the default one when subId is negative. */
     @SuppressWarnings("deprecation")
-    private static SmsManager smsManager(Context context) {
+    static SmsManager smsManager(Context context, int subId) {
         if (Build.VERSION.SDK_INT >= 31) {
-            return context.getSystemService(SmsManager.class);
+            SmsManager manager = context.getSystemService(SmsManager.class);
+            return subId >= 0 ? manager.createForSubscriptionId(subId) : manager;
         }
-        return SmsManager.getDefault();
+        return subId >= 0 ? SmsManager.getSmsManagerForSubscriptionId(subId) : SmsManager.getDefault();
     }
 }

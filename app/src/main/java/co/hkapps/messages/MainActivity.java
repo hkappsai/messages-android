@@ -40,7 +40,7 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
     private static final int MENU_MARK_ALL_READ = 2;
     private static final int MENU_SETTINGS = 3;
 
-    private final List<Sms> conversations = new ArrayList<>();
+    private final List<Conversation> conversations = new ArrayList<>();
     private final Set<Long> pinned = new HashSet<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable reload = this::load;
@@ -187,6 +187,7 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
     private void startObserving() {
         if (observing) return;
         getContentResolver().registerContentObserver(Telephony.Sms.CONTENT_URI, true, observer);
+        getContentResolver().registerContentObserver(Telephony.Mms.CONTENT_URI, true, observer);
         observing = true;
     }
 
@@ -195,13 +196,14 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         if (conversations.isEmpty()) emptyText.setText(R.string.loading);
 
         executor.execute(() -> {
-            List<Sms> all = new SmsReader(this).loadConversations();
-            List<Sms> visible = new ArrayList<>();
+            List<Conversation> all = new MessageReader(this).loadConversations();
+            List<Conversation> visible = new ArrayList<>();
             Set<Long> pins = new HashSet<>();
-            for (Sms sms : all) {
-                if (Prefs.isBlocked(this, sms.address)) continue;
-                if (Prefs.isPinned(this, sms.threadId)) pins.add(sms.threadId);
-                visible.add(sms);
+            for (Conversation c : all) {
+                // Blocking applies to 1-to-1 chats; groups stay visible.
+                if (!c.isGroup() && Prefs.isBlocked(this, c.address())) continue;
+                if (Prefs.isPinned(this, c.threadId)) pins.add(c.threadId);
+                visible.add(c);
             }
             // Stable sort: pinned rows move up, everything keeps its date order.
             Collections.sort(visible, (a, b) ->
@@ -218,12 +220,12 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         });
     }
 
-    private void openThread(Sms sms) {
+    private void openThread(Conversation c) {
         startActivity(new Intent(this, ThreadActivity.class)
-                .putExtra(ThreadActivity.EXTRA_THREAD_ID, sms.threadId));
+                .putExtra(ThreadActivity.EXTRA_THREAD_ID, c.threadId));
     }
 
-    private void showActions(Sms sms) {
+    private void showActions(Conversation sms) {
         boolean isPinned = pinned.contains(sms.threadId);
         List<String> labels = new ArrayList<>();
         List<Runnable> actions = new ArrayList<>();
@@ -242,46 +244,53 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
                 }
             });
         }
-        labels.add(getString(R.string.call));
-        actions.add(() -> call(sms));
-        labels.add(getString(R.string.block));
-        actions.add(() -> confirmBlock(sms));
+        if (!sms.isGroup()) {
+            labels.add(getString(R.string.call));
+            actions.add(() -> call(sms));
+            labels.add(getString(R.string.block));
+            actions.add(() -> confirmBlock(sms));
+        }
         labels.add(getString(R.string.delete));
         actions.add(() -> confirmDelete(sms));
 
         new AlertDialog.Builder(this)
-                .setTitle(sms.displayName)
+                .setTitle(sms.name)
                 .setItems(labels.toArray(new String[0]), (d, which) -> actions.get(which).run())
                 .show();
     }
 
-    private void call(Sms sms) {
-        startActivity(new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", sms.address, null)));
+    private void call(Conversation c) {
+        if (c.isGroup()) {
+            Toast.makeText(this, "Can't call a group", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startActivity(new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", c.address(), null)));
     }
 
-    private void confirmBlock(Sms sms) {
+    private void confirmBlock(Conversation sms) {
         new AlertDialog.Builder(this)
-                .setTitle("Block " + sms.displayName + "?")
+                .setTitle("Block " + sms.name + "?")
                 .setMessage("This conversation will be hidden and new texts from this number "
                         + "won't notify you. Nothing gets deleted; unblock any time in Settings.")
                 .setPositiveButton(R.string.block, (d, w) -> {
-                    Prefs.setBlocked(this, sms.address, true);
+                    Prefs.setBlocked(this, sms.address(), true);
                     Notifier.cancel(this, sms.threadId);
-                    Toast.makeText(this, "Blocked " + sms.displayName, Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Blocked " + sms.name, Toast.LENGTH_SHORT).show();
                     load();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 
-    private void confirmDelete(Sms sms) {
+    private void confirmDelete(Conversation sms) {
         if (!requireDefault()) return;
         new AlertDialog.Builder(this)
                 .setTitle("Delete conversation?")
-                .setMessage("All messages with " + sms.displayName + " will be deleted.")
+                .setMessage("All messages with " + sms.name + " will be deleted.")
                 .setPositiveButton(R.string.delete, (d, w) -> {
                     Prefs.setPinned(this, sms.threadId, false);
                     Notifier.cancel(this, sms.threadId);
+                    for (Scheduler.Item s : Scheduler.forThread(this, sms.threadId)) Scheduler.cancel(this, s.id);
                     SmsWriter.run(() -> SmsWriter.deleteThread(getApplicationContext(), sms.threadId));
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -290,7 +299,7 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
 
     private class ConversationAdapter extends BaseAdapter {
         @Override public int getCount() { return conversations.size(); }
-        @Override public Sms getItem(int position) { return conversations.get(position); }
+        @Override public Conversation getItem(int position) { return conversations.get(position); }
         @Override public long getItemId(int position) { return conversations.get(position).threadId; }
 
         @Override
@@ -298,14 +307,16 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
             View view = convertView != null ? convertView
                     : LayoutInflater.from(parent.getContext())
                             .inflate(R.layout.item_conversation, parent, false);
-            Sms sms = getItem(position);
-            bindConversation(view, look, sms, pinned.contains(sms.threadId));
+            Conversation c = getItem(position);
+            bindConversation(view, look, c.name, c.address(), c.isGroup(), c.latest, c.unreadCount,
+                    pinned.contains(c.threadId));
             return view;
         }
     }
 
     /** Fills one conversation row. Also used by search results. */
-    static void bindConversation(View view, Look look, Sms sms, boolean isPinned) {
+    static void bindConversation(View view, Look look, String title, String address, boolean group,
+                                 Message latest, int unreadCount, boolean isPinned) {
         // A recycled row may still be shifted from a swipe.
         view.findViewById(R.id.content).setTranslationX(0);
         view.findViewById(R.id.swipe_bg).setVisibility(View.INVISIBLE);
@@ -316,15 +327,20 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         TextView snippet = view.findViewById(R.id.snippet);
         TextView badge = view.findViewById(R.id.badge);
 
-        avatar.setBackground(Look.circle(Look.avatarColor(sms.address)));
-        avatar.setText(Format.initial(sms.displayName));
-        name.setText(sms.displayName);
-        date.setText(Format.shortDate(view.getContext(), sms.date));
+        avatar.setBackground(Look.circle(Look.avatarColor(group ? title : address)));
+        avatar.setText(group ? "👥" : Format.initial(title));
+        name.setText(title);
+        date.setText(Format.shortDate(view.getContext(), latest.date));
 
-        String prefix = sms.incoming() ? "" : sms.failed() ? "Not sent: " : "You: ";
-        snippet.setText(prefix + sms.body);
+        String prefix;
+        if (latest.incoming()) {
+            prefix = group && latest.senderName != null ? latest.senderName + ": " : "";
+        } else {
+            prefix = latest.failed() ? "Not sent: " : "You: ";
+        }
+        snippet.setText(prefix + latest.preview());
 
-        boolean unread = sms.unreadCount > 0;
+        boolean unread = unreadCount > 0;
         name.setTypeface(null, unread ? Typeface.BOLD : Typeface.NORMAL);
         snippet.setTypeface(null, unread ? Typeface.BOLD : Typeface.NORMAL);
         date.setTypeface(null, unread ? Typeface.BOLD : Typeface.NORMAL);
@@ -334,7 +350,7 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         view.findViewById(R.id.pin).setVisibility(isPinned ? View.VISIBLE : View.GONE);
         badge.setVisibility(unread ? View.VISIBLE : View.GONE);
         if (unread) {
-            badge.setText(sms.unreadCount > 99 ? "99+" : String.valueOf(sms.unreadCount));
+            badge.setText(unreadCount > 99 ? "99+" : String.valueOf(unreadCount));
             badge.setBackground(Look.rounded(look.accent, Format.dp(view.getContext(), 10)));
             badge.setTextColor(look.onAccent);
         }

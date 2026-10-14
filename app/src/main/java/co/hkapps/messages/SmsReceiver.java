@@ -7,6 +7,8 @@ import android.net.Uri;
 import android.provider.Telephony;
 import android.telephony.SmsMessage;
 
+import java.util.Collections;
+
 /** Gets new texts when this is the default SMS app, saves them and notifies. */
 public class SmsReceiver extends BroadcastReceiver {
 
@@ -33,7 +35,7 @@ public class SmsReceiver extends BroadcastReceiver {
         new Thread(() -> {
             try {
                 Uri row = SmsWriter.insertIncoming(app, address, text, sentAt, subId);
-                SmsReader reader = new SmsReader(app);
+                MessageReader reader = new MessageReader(app);
                 long threadId = reader.threadIdOf(row);
 
                 if (Prefs.isBlocked(app, address)) {
@@ -45,7 +47,8 @@ public class SmsReceiver extends BroadcastReceiver {
                     SmsWriter.markRead(app, threadId);
                     return;
                 }
-                Notifier.showMessage(app, threadId, address, reader.lookupName(address), text);
+                Notifier.showMessage(app, threadId, Collections.singletonList(address),
+                        reader.lookupName(address), text);
             } finally {
                 result.finish();
             }

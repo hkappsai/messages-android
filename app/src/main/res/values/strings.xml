@@ -25,4 +25,10 @@
     <string name="mark_all_read">Mark all as read</string>
     <string name="reply">Reply</string>
     <string name="channel_name">Messages</string>
+    <string name="attach">Attach</string>
+    <string name="photo">Photo</string>
+    <string name="next">Next</string>
+    <string name="add_more_hint">Add another person</string>
+    <string name="schedule">Schedule</string>
+    <string name="record">Record voice message</string>
 </resources>

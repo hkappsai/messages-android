@@ -6,6 +6,8 @@ import android.os.IBinder;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 
+import java.util.List;
+
 /** Sends the quick text picked when declining a call ("Can't talk now…"). */
 public class RespondService extends Service {
 
@@ -15,11 +17,11 @@ public class RespondService extends Service {
             stopSelf(startId);
             return START_NOT_STICKY;
         }
-        String address = ThreadActivity.addressFromUri(intent.getData());
+        List<String> addresses = ThreadActivity.addressesFromUri(intent.getData());
         String text = intent.getStringExtra(Intent.EXTRA_TEXT);
         new Thread(() -> {
-            if (!TextUtils.isEmpty(address) && !TextUtils.isEmpty(text)) {
-                SmsWriter.send(getApplicationContext(), address, text);
+            if (!addresses.isEmpty() && !TextUtils.isEmpty(text)) {
+                Sender.send(getApplicationContext(), addresses, text);
             }
             stopSelf(startId);
         }).start();

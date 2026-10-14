@@ -13,10 +13,13 @@ import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 
@@ -25,18 +28,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Pick a contact or type a number to start a conversation. */
+/** Pick one or more people (or type numbers) to start a conversation or group. */
 public class NewMessageActivity extends BaseActivity {
 
     private static final int CONTACT_LIMIT = 300;
+    private static final int MENU_NEXT = 1;
 
-    /** {name, number}. A null name means "send to what the user typed". */
+    /** {name, number}. A null name means "add what the user typed". */
     private final List<String[]> rows = new ArrayList<>();
+    /** {name, number} of everyone picked so far. */
+    private final List<String[]> picked = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable search = this::search;
     private int generation;
 
     private EditText to;
+    private LinearLayout chips;
+    private View chipsScroll;
     private ContactAdapter adapter;
     private String body;
 
@@ -45,6 +53,7 @@ public class NewMessageActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_new_message);
         showUpButton();
+        if (getActionBar() != null) getActionBar().setSubtitle("Hold a contact to start a group");
 
         // Text shared from another app, or carried over from an sms: link.
         body = getIntent().getStringExtra(ThreadActivity.EXTRA_BODY);
@@ -53,31 +62,111 @@ public class NewMessageActivity extends BaseActivity {
         }
 
         to = findViewById(R.id.to);
+        chips = findViewById(R.id.chips);
+        chipsScroll = findViewById(R.id.chips_scroll);
         ListView list = findViewById(R.id.list);
         adapter = new ContactAdapter();
         list.setAdapter(adapter);
         list.setEmptyView(findViewById(R.id.empty));
-        list.setOnItemClickListener((parent, view, position, id) -> open(rows.get(position)[1]));
+        // Tapping one person with nobody else picked opens the chat at once;
+        // otherwise the person joins the group being built.
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            String[] row = rows.get(position);
+            String[] person = {row[0] != null ? row[0] : row[1], row[1]};
+            if (picked.isEmpty()) {
+                picked.add(person);
+                open();
+            } else {
+                addPicked(person);
+            }
+        });
+        list.setOnItemLongClickListener((parent, view, position, id) -> {
+            String[] row = rows.get(position);
+            addPicked(new String[]{row[0] != null ? row[0] : row[1], row[1]});
+            return true;
+        });
 
         to.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
+                // A comma or semicolon after a number adds it as a person.
+                String text = s.toString();
+                if (text.endsWith(",") || text.endsWith(";")) {
+                    String typed = text.substring(0, text.length() - 1).trim();
+                    if (hasDigit(typed)) {
+                        addPicked(new String[]{typed, typed});
+                        return;
+                    }
+                }
                 handler.removeCallbacks(search);
                 handler.postDelayed(search, 150);
             }
         });
         to.setOnEditorActionListener((v, actionId, event) -> {
             String typed = to.getText().toString().trim();
-            if (hasDigit(typed)) {
-                open(typed);
-            } else if (!rows.isEmpty()) {
-                open(rows.get(0)[1]);
-            }
+            if (hasDigit(typed)) picked.add(new String[]{typed, typed});
+            else if (picked.isEmpty() && !rows.isEmpty()) picked.add(new String[]{rows.get(0)[0], rows.get(0)[1]});
+            open();
             return true;
         });
 
         search();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        if (!picked.isEmpty()) {
+            menu.add(0, MENU_NEXT, 0, R.string.next)
+                    .setIcon(R.drawable.ic_forward)
+                    .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        }
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == MENU_NEXT) {
+            String typed = to.getText().toString().trim();
+            if (hasDigit(typed)) picked.add(new String[]{typed, typed});
+            open();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void addPicked(String[] person) {
+        for (String[] p : picked) {
+            if (Prefs.sameAddress(p[1], person[1])) return;
+        }
+        picked.add(person);
+        to.setText("");
+        showChips();
+    }
+
+    private void showChips() {
+        chips.removeAllViews();
+        int pad = (int) Format.dp(this, 10);
+        int gap = (int) Format.dp(this, 4);
+        for (String[] person : new ArrayList<>(picked)) {
+            TextView chip = new TextView(this);
+            chip.setText(person[0] + "  ✕");
+            chip.setTextColor(look.onAccent);
+            chip.setBackground(Look.rounded(look.accent, Format.dp(this, 16)));
+            chip.setPadding(pad, gap, pad, gap);
+            chip.setContentDescription("Remove " + person[0]);
+            chip.setOnClickListener(v -> {
+                picked.remove(person);
+                showChips();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(gap, 0, gap, 0);
+            chips.addView(chip, lp);
+        }
+        chipsScroll.setVisibility(picked.isEmpty() ? View.GONE : View.VISIBLE);
+        to.setHint(picked.isEmpty() ? R.string.to_hint : R.string.add_more_hint);
+        invalidateOptionsMenu();
     }
 
     private void search() {
@@ -137,10 +226,12 @@ public class NewMessageActivity extends BaseActivity {
         return false;
     }
 
-    private void open(String address) {
-        if (TextUtils.isEmpty(address)) return;
+    private void open() {
+        if (picked.isEmpty()) return;
+        String[] numbers = new String[picked.size()];
+        for (int i = 0; i < picked.size(); i++) numbers[i] = picked.get(i)[1];
         Intent intent = new Intent(this, ThreadActivity.class)
-                .putExtra(ThreadActivity.EXTRA_ADDRESS, address);
+                .putExtra(ThreadActivity.EXTRA_ADDRESSES, numbers);
         if (body != null) intent.putExtra(ThreadActivity.EXTRA_BODY, body);
         startActivity(intent);
         finish();

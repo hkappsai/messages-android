@@ -13,15 +13,18 @@ import android.content.pm.PackageManager;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 
+import java.util.List;
+
 /** New-message notifications with inline reply and "Mark as read". */
 public final class Notifier {
 
     private static final String CHANNEL = "messages";
-    private static final int MMS_ID = -1;
+    private static final int MMS_FAILED_ID = -2;
 
     private Notifier() {}
 
-    public static void showMessage(Context context, long threadId, String address, String name, String body) {
+    /** recipients: everyone in the chat, so a reply reaches the whole group. */
+    public static void showMessage(Context context, long threadId, List<String> recipients, String title, String body) {
         if (!canNotify(context)) return;
         int id = (int) threadId;
 
@@ -36,7 +39,7 @@ public final class Notifier {
         Intent reply = new Intent(context, ReplyReceiver.class)
                 .setAction(ReplyReceiver.ACTION_REPLY)
                 .putExtra(ThreadActivity.EXTRA_THREAD_ID, threadId)
-                .putExtra(ThreadActivity.EXTRA_ADDRESS, address);
+                .putExtra(ThreadActivity.EXTRA_ADDRESSES, recipients.toArray(new String[0]));
         PendingIntent replyIntent = PendingIntent.getBroadcast(context, id, reply,
                 PendingIntent.FLAG_UPDATE_CURRENT | mutable);
         RemoteInput input = new RemoteInput.Builder(ReplyReceiver.KEY_TEXT)
@@ -61,7 +64,7 @@ public final class Notifier {
         Notification notification = new Notification.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_message)
                 .setColor(Prefs.accent(context))
-                .setContentTitle(name)
+                .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(new Notification.BigTextStyle().bigText(body))
                 .setCategory(Notification.CATEGORY_MESSAGE)
@@ -74,17 +77,33 @@ public final class Notifier {
         manager(context).notify(id, notification);
     }
 
-    /** MMS download isn't built yet, so at least tell the user one arrived. */
-    public static void showMms(Context context) {
+    /** A picture message couldn't be fetched (no mobile data, say). Offers a retry. */
+    public static void showMmsFailed(Context context, String from, String location, String transactionId, int subId) {
         if (!canNotify(context)) return;
+        Intent retry = new Intent(context, MmsResultReceiver.class)
+                .setAction(MmsResultReceiver.ACTION_RETRY)
+                .putExtra(Mms.EXTRA_LOCATION, location)
+                .putExtra(Mms.EXTRA_TRANSACTION, transactionId)
+                .putExtra(Mms.EXTRA_FROM, from)
+                .putExtra(Mms.EXTRA_SUB, subId);
+        PendingIntent retryIntent = PendingIntent.getBroadcast(context, MMS_FAILED_ID, retry,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        String who = from == null ? "someone" : new MessageReader(context).lookupName(from);
         Notification notification = new Notification.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_message)
                 .setColor(Prefs.accent(context))
-                .setContentTitle("Picture message received")
-                .setContentText("Messages can't show MMS yet.")
+                .setContentTitle("Couldn't download a picture message")
+                .setContentText("From " + who + ". Check that mobile data is on.")
                 .setAutoCancel(true)
+                .setContentIntent(retryIntent)
+                .addAction(new Notification.Action.Builder(
+                        Icon.createWithResource(context, R.drawable.ic_message), "Try again", retryIntent).build())
                 .build();
-        manager(context).notify(MMS_ID, notification);
+        manager(context).notify(MMS_FAILED_ID, notification);
+    }
+
+    static void cancelMmsFailed(Context context) {
+        manager(context).cancel(MMS_FAILED_ID);
     }
 
     public static void cancel(Context context, long threadId) {
