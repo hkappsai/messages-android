@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:divider="@null"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:stackFromBottom="true"
+            android:transcriptMode="normal" />
+
+        <include layout="@layout/view_empty" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:elevation="8dp"
+        android:background="?android:attr/colorBackground"
+        android:gravity="bottom"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="6dp">
+
+        <EditText
+            android:id="@+id/input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="@string/type_message"
+            android:importantForAutofill="no"
+            android:inputType="textCapSentences|textMultiLine|textShortMessage"
+            android:maxLines="6"
+            android:minHeight="48dp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/counter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="2dp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <ImageButton
+                android:id="@+id/send"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginBottom="2dp"
+                android:contentDescription="@string/send"
+                android:src="@drawable/ic_send" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

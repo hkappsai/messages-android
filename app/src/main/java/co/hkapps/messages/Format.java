@@ -20,8 +20,11 @@ final class Format {
                 DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_NUMERIC_DATE | DateUtils.FORMAT_SHOW_YEAR);
     }
 
-    /** Date plus time, used under each message bubble. */
-    static String fullDate(Context context, long millis) {
+    /** Time only for today, date plus time for older messages. */
+    static String messageTime(Context context, long millis) {
+        if (DateUtils.isToday(millis)) {
+            return DateUtils.formatDateTime(context, millis, DateUtils.FORMAT_SHOW_TIME);
+        }
         return DateUtils.formatDateTime(context, millis,
                 DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_TIME | DateUtils.FORMAT_ABBREV_MONTH);
     }
@@ -30,8 +33,12 @@ final class Format {
     static String initial(String name) {
         for (int i = 0; i < name.length(); i++) {
             char ch = name.charAt(i);
-            if (Character.isLetterOrDigit(ch)) return String.valueOf(Character.toUpperCase(ch));
+            if (Character.isLetter(ch)) return String.valueOf(Character.toUpperCase(ch));
         }
         return "#";
+    }
+
+    static float dp(Context context, float value) {
+        return value * context.getResources().getDisplayMetrics().density;
     }
 }

@@ -1,8 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.Light.DarkActionBar">
-        <item name="android:colorPrimary">@color/primary</item>
-        <item name="android:colorPrimaryDark">@color/primary_dark</item>
-        <item name="android:colorAccent">@color/primary</item>
+    <!-- Bar and accent colors come from the user's settings at runtime (see Look.java). -->
+    <style name="AppTheme.Light" parent="android:Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">#1A73E8</item>
+        <item name="android:colorAccent">#1A73E8</item>
+    </style>
+
+    <style name="AppTheme.Dark" parent="android:Theme.Material">
+        <item name="android:colorPrimary">#1F1F1F</item>
+        <item name="android:colorAccent">#8AB4F8</item>
+        <item name="android:colorBackground">#121212</item>
+        <item name="android:windowBackground">@color/dark_bg</item>
+    </style>
+
+    <style name="AppTheme.Black" parent="AppTheme.Dark">
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+    <style name="SectionHeader">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:paddingTop">20dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:tag">header</item>
     </style>
 </resources>
