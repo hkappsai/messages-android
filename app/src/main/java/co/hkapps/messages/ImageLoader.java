@@ -53,6 +53,54 @@ final class ImageLoader {
         });
     }
 
+    /** Shows a picture or GIF from the web (GIF search results). */
+    static void loadUrl(ImageView view, String url, int maxPx) {
+        String key = url + "@" + maxPx;
+        view.setTag(key);
+        Drawable cached = CACHE.get(key);
+        if (cached != null) {
+            show(view, cached);
+            return;
+        }
+        view.setImageDrawable(null);
+        Context context = view.getContext().getApplicationContext();
+        DECODER.execute(() -> {
+            Drawable d;
+            try {
+                byte[] data = Giphy.get(url, 8 * 1024 * 1024);
+                d = decodeBytes(context, data, maxPx);
+            } catch (Exception | OutOfMemoryError e) {
+                d = null;
+            }
+            if (d == null) return;
+            CACHE.put(key, d);
+            Drawable ready = d;
+            view.post(() -> {
+                if (key.equals(view.getTag())) show(view, ready);
+            });
+        });
+    }
+
+    static Drawable decodeBytes(Context context, byte[] data, int maxPx) throws java.io.IOException {
+        if (Build.VERSION.SDK_INT >= 28) {
+            ImageDecoder.Source source = ImageDecoder.createSource(java.nio.ByteBuffer.wrap(data));
+            return ImageDecoder.decodeDrawable(source, (decoder, info, src) -> {
+                int w = info.getSize().getWidth();
+                int h = info.getSize().getHeight();
+                float scale = Math.min(1f, maxPx / (float) Math.max(w, h));
+                decoder.setTargetSize(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
+            });
+        }
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
+        o.inSampleSize = 1;
+        while (Math.max(o.outWidth, o.outHeight) / (o.inSampleSize * 2) >= maxPx) o.inSampleSize *= 2;
+        o.inJustDecodeBounds = false;
+        Bitmap b = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
+        return b == null ? null : new BitmapDrawable(context.getResources(), b);
+    }
+
     private static void show(ImageView view, Drawable d) {
         view.setImageDrawable(d);
         if (d instanceof Animatable) ((Animatable) d).start();

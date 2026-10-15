@@ -13,8 +13,10 @@
             android:id="@+id/list"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:choiceMode="multipleChoiceModal"
             android:clipToPadding="false"
             android:divider="@null"
+            android:listSelector="@android:color/transparent"
             android:paddingTop="8dp"
             android:paddingBottom="8dp"
             android:stackFromBottom="true"
@@ -29,6 +31,24 @@
         android:background="?android:attr/colorBackground"
         android:elevation="8dp"
         android:orientation="vertical">
+
+        <!-- Smart Reply suggestions. -->
+        <HorizontalScrollView
+            android:id="@+id/smart_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/smart"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingStart="8dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="8dp" />
+        </HorizontalScrollView>
 
         <!-- Files waiting to be sent, with an x to remove each one. -->
         <HorizontalScrollView
@@ -99,19 +119,52 @@
                 android:layout_height="48dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/attach"
-                android:src="@drawable/ic_attach"
+                android:src="@drawable/ic_add"
                 android:tint="?android:attr/textColorSecondary" />
 
-            <EditText
-                android:id="@+id/input"
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="@string/type_message"
-                android:importantForAutofill="no"
-                android:inputType="textCapSentences|textMultiLine|textShortMessage"
-                android:maxLines="6"
-                android:minHeight="48dp" />
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="bottom"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/input"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="@string/type_message"
+                        android:importantForAutofill="no"
+                        android:inputType="textCapSentences|textMultiLine|textShortMessage"
+                        android:maxLines="6"
+                        android:minHeight="48dp" />
+
+                    <ImageButton
+                        android:id="@+id/emoji"
+                        android:layout_width="40dp"
+                        android:layout_height="48dp"
+                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Emoji"
+                        android:src="@drawable/ic_emoji"
+                        android:tint="?android:attr/textColorSecondary" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/signature"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="2dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="wrap_content"
@@ -129,6 +182,17 @@
                     android:textSize="11sp"
                     android:visibility="gone" />
 
+                <TextView
+                    android:id="@+id/sim"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
                 <ImageButton
                     android:id="@+id/send"
                     android:layout_width="44dp"
@@ -138,5 +202,12 @@
                     android:src="@drawable/ic_send" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- The "+" panel: photos, camera, emoji, GIFs and more. -->
+        <FrameLayout
+            android:id="@+id/panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>

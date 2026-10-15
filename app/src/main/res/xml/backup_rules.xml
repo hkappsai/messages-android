@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: settings, per-chat settings, signatures and patterns. Messages live in
+     Android's own store, which the system backs up separately. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="settings.xml" />
+        <include domain="sharedpref" path="chats.xml" />
+        <include domain="sharedpref" path="emoji.xml" />
+        <include domain="database" path="app.db" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="settings.xml" />
+        <include domain="sharedpref" path="chats.xml" />
+        <include domain="sharedpref" path="emoji.xml" />
+        <include domain="sharedpref" path="scheduled.xml" />
+        <include domain="database" path="app.db" />
+        <include domain="file" path="keep" />
+        <include domain="file" path="scheduled" />
+    </device-transfer>
+</data-extraction-rules>

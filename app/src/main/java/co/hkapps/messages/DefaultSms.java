@@ -38,8 +38,7 @@ public final class DefaultSms {
         new AlertDialog.Builder(activity)
                 .setTitle(R.string.set_default)
                 .setMessage("Android only lets the default SMS app send texts, receive new ones, "
-                        + "mark them read or delete them.\n\n"
-                        + "Note: Messages can't show picture messages (MMS) yet.")
+                        + "mark them read or delete them.")
                 .setPositiveButton(R.string.set_default, (d, w) -> request(activity))
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();

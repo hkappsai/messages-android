@@ -31,4 +31,15 @@
     <string name="add_more_hint">Add another person</string>
     <string name="schedule">Schedule</string>
     <string name="record">Record voice message</string>
+    <string name="incoming_messages">Incoming messages</string>
+    <string name="mark_unread">Mark as unread</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="customize">Customize</string>
+    <string name="forward">Forward</string>
+    <string name="lock">Lock</string>
+    <string name="unlock">Unlock</string>
+    <string name="details">Message details</string>
+    <string name="undo">Undo</string>
+    <string name="keep">Keep</string>
 </resources>

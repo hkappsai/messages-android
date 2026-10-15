@@ -1,175 +1,108 @@
 package co.hkapps.messages;
 
+import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.provider.Settings;
-import android.view.Gravity;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.ViewGroup;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.RadioGroup;
-import android.widget.TextView;
+import android.widget.Toast;
 
-import java.util.List;
+/** Settings home, laid out like Textra's: General, Messaging, More stuff, About. */
+public class SettingsActivity extends SettingsScreen {
 
-/** Default SMS app, theme, colors, notifications and blocked numbers. */
-public class SettingsActivity extends BaseActivity {
-
-    private interface ColorPick {
-        void onPick(int color);
-    }
-
-    private TextView defaultStatus;
-    private Button defaultButton;
-    private LinearLayout blockedList;
+    static final String[] UNKNOWN_LABELS = {"Show normally", "Show silently", "No notification"};
+    static final Object[] UNKNOWN_VALUES = {Prefs.UNKNOWN_NORMAL, Prefs.UNKNOWN_SILENT, Prefs.UNKNOWN_NONE};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_settings);
-        showUpButton();
-        colorHeaders(findViewById(android.R.id.content));
-
-        defaultStatus = findViewById(R.id.default_status);
-        defaultButton = findViewById(R.id.default_button);
-        defaultButton.setOnClickListener(v -> DefaultSms.request(this));
-
-        setUpThemeMode();
-
-        // Picking a color rebuilds this screen so the bar and preview show it at once.
-        addSwatches(findViewById(R.id.accent_colors), Prefs.accent(this), false, color -> {
-            Prefs.setAccent(this, color);
-            recreate();
-        });
-        addSwatches(findViewById(R.id.bubble_colors), Prefs.bubble(this), true, color -> {
-            Prefs.setBubble(this, color);
-            recreate();
-        });
-        addPreview(findViewById(R.id.preview));
-
-        findViewById(R.id.notification_settings).setOnClickListener(v -> startActivity(
-                new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())));
-
-        blockedList = findViewById(R.id.blocked_list);
-
-        TextView version = findViewById(R.id.version);
-        try {
-            version.setText("Messages " + getPackageManager().getPackageInfo(getPackageName(), 0).versionName);
-        } catch (PackageManager.NameNotFoundException e) {
-            version.setVisibility(View.GONE);
-        }
+        setTitle(R.string.settings);
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
+    protected void build(Rows r) {
         boolean isDefault = DefaultSms.isDefault(this);
-        defaultStatus.setText(isDefault
-                ? "Messages is your default SMS app."
-                : "Another app is your default SMS app.");
-        defaultButton.setVisibility(isDefault ? View.GONE : View.VISIBLE);
-        fillBlocked();
-    }
+        if (!isDefault) {
+            r.action("Make default app", "Messages needs to be the default SMS app to send and receive",
+                    () -> DefaultSms.request(this));
+        }
 
-    private void setUpThemeMode() {
-        RadioGroup group = findViewById(R.id.theme_mode);
-        int[] ids = {R.id.mode_system, R.id.mode_light, R.id.mode_dark, R.id.mode_black};
-        group.check(ids[Prefs.themeMode(this)]);
-        group.setOnCheckedChangeListener((g, checkedId) -> {
-            for (int mode = 0; mode < ids.length; mode++) {
-                if (ids[mode] == checkedId && mode != Prefs.themeMode(this)) {
-                    Prefs.setThemeMode(this, mode);
-                    recreate();
-                }
+        r.header("General");
+        r.action("Customize look", "Colors, bubbles, font and emoji", () -> open(LookSettingsActivity.class));
+        r.action("Notifications", "Sound, vibration, pop-ups, buttons and privacy", () -> open(NotificationSettingsActivity.class));
+        r.action("Blocklist", Prefs.blocked(this).size() + " blocked", () -> open(BlocklistActivity.class));
+
+        r.header("Messaging");
+        r.action("Sending, SMS & MMS", "Delivery reports, signature, send delay, group messages, media",
+                () -> open(MessagingSettingsActivity.class));
+
+        r.header("More stuff");
+        r.toggle("Quick Compose", "Send messages from the pull-down notification drawer", Prefs.QUICK_COMPOSE);
+        r.toggle("Badge app icon", "Show unread message count on the app icon", Prefs.BADGE);
+        r.choice("Unknown contact notifications", "Texts from numbers that are not in your contacts",
+                Prefs.UNKNOWN_SENDERS, UNKNOWN_LABELS, UNKNOWN_VALUES);
+        r.toggle("Auto-block unknown email contacts",
+                "Blocklist chats from email addresses that are not in your contacts", Prefs.AUTO_BLOCK_EMAIL);
+        String number = Prefs.string(this, Prefs.MY_NUMBER);
+        r.action("Your mobile number", number.isEmpty() ? "[Not set] Used to leave you out of group chats" : number,
+                () -> askText("Enter your mobile number", "Used to identify you in MMS group messaging", number, true,
+                        text -> {
+                            Prefs.put(this, Prefs.MY_NUMBER, text);
+                            refresh();
+                        }));
+        Sections.keep(this, r);
+        r.header("Backup");
+        r.action("Back up & restore", "Save settings and messages to a file, or bring them back",
+                () -> open(BackupActivity.class));
+        r.action("Mark all as read", null, () -> {
+            if (!isDefault) {
+                Toast.makeText(this, "To mark all as read, Messages needs to be the default app.", Toast.LENGTH_SHORT).show();
+                return;
             }
+            Context app = getApplicationContext();
+            SmsWriter.run(() -> SmsWriter.markAllRead(app));
+            Notifier.cancelAllMessages(app);
+            Toast.makeText(this, "Marked all as read", Toast.LENGTH_SHORT).show();
         });
+
+        r.header("Debug");
+        r.toggle("Enable debug logging", "Keeps a short log of sending and receiving (a tiny bit slower)", Prefs.DEBUG_LOG);
+        r.action("Share debug log", "Send it as soon as you've reproduced a problem", () -> executor.execute(() -> {
+            String log = AppDb.get(this).logText();
+            onUi(() -> startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Messages debug log")
+                    .putExtra(Intent.EXTRA_TEXT, log.isEmpty() ? "(empty: turn on debug logging first)" : log), null)));
+        }));
+
+        r.header("About");
+        String version = "";
+        try {
+            version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // Leave blank.
+        }
+        String shown = version;
+        r.action("About", "Version " + shown, () -> new AlertDialog.Builder(this)
+                .setTitle("Messages " + shown)
+                .setMessage("A fast, private messaging app built only on the Android framework. "
+                        + "Your messages stay on your phone. The only internet use is web link previews and GIF "
+                        + "search, and only when you use them.\n\nCopyright 2026 HK Apps. Apache License 2.0.")
+                .setPositiveButton(android.R.string.ok, null)
+                .show());
+        r.action("What's new?", null, () -> new AlertDialog.Builder(this)
+                .setTitle("What's new")
+                .setMessage(WhatsNew.TEXT)
+                .setPositiveButton(android.R.string.ok, null)
+                .show());
     }
 
-    /** A row of round color buttons. With withAuto, the first one means "same as accent" (0). */
-    private void addSwatches(LinearLayout row, int selected, boolean withAuto, ColorPick pick) {
-        int size = (int) Format.dp(this, 40);
-        int margin = (int) Format.dp(this, 6);
-        int ring = look.dark ? 0xFFFFFFFF : 0xFF202124;
-
-        if (withAuto) {
-            TextView auto = new TextView(this);
-            auto.setText("A");
-            auto.setGravity(Gravity.CENTER);
-            auto.setTextColor(look.onAccent);
-            auto.setContentDescription("Same as accent color");
-            auto.setBackground(swatch(look.accent, selected == 0, ring));
-            auto.setOnClickListener(v -> pick.onPick(0));
-            row.addView(auto, swatchParams(size, margin));
-        }
-        for (int color : Look.COLORS) {
-            View dot = new View(this);
-            dot.setBackground(swatch(color, color == selected, ring));
-            dot.setContentDescription(String.format("Color #%06X", color & 0xFFFFFF));
-            dot.setOnClickListener(v -> pick.onPick(color));
-            row.addView(dot, swatchParams(size, margin));
-        }
+    @Override
+    protected void onSettingChanged() {
+        Notifier.updateQuickCompose(this);
+        super.onSettingChanged();
     }
 
-    private GradientDrawable swatch(int color, boolean selected, int ring) {
-        GradientDrawable d = Look.circle(color);
-        if (selected) d.setStroke((int) Format.dp(this, 3), ring);
-        return d;
-    }
-
-    private static LinearLayout.LayoutParams swatchParams(int size, int margin) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(size, size);
-        p.setMargins(margin, margin, margin, margin);
-        return p;
-    }
-
-    private void addPreview(LinearLayout container) {
-        LayoutInflater inflater = LayoutInflater.from(this);
-        String[][] sample = {{"in", "Are we still on for tonight?"}, {"out", "Yes! See you at 7."}};
-        for (String[] line : sample) {
-            View row = inflater.inflate(R.layout.item_message, container, false);
-            ThreadActivity.bindBubble(row, look, line[0].equals("in"), line[1]);
-            row.findViewById(R.id.time).setVisibility(View.GONE);
-            container.addView(row);
-        }
-    }
-
-    private void fillBlocked() {
-        blockedList.removeAllViews();
-        List<String> numbers = Prefs.blocked(this);
-        int pad = (int) Format.dp(this, 16);
-
-        if (numbers.isEmpty()) {
-            TextView none = new TextView(this);
-            none.setText("No blocked numbers. Long-press a conversation to block it.");
-            none.setTextColor(defaultStatus.getTextColors().withAlpha(160));
-            none.setPadding(pad, 0, pad, 0);
-            blockedList.addView(none);
-            return;
-        }
-        for (String number : numbers) {
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(pad, 0, pad / 2, 0);
-
-            TextView text = new TextView(this);
-            text.setText(number);
-            text.setTextSize(15);
-            text.setTextColor(defaultStatus.getTextColors());
-            row.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-
-            Button unblock = new Button(this, null, android.R.attr.borderlessButtonStyle);
-            unblock.setText(R.string.unblock);
-            unblock.setOnClickListener(v -> {
-                Prefs.setBlocked(this, number, false);
-                fillBlocked();
-            });
-            row.addView(unblock);
-            blockedList.addView(row);
-        }
+    private void open(Class<?> screen) {
+        startActivity(new Intent(this, screen));
     }
 }

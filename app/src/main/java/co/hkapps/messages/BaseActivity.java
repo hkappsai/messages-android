@@ -24,9 +24,14 @@ public abstract class BaseActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         look = Look.from(this);
         lookKey = look.key();
-        setTheme(look.styleRes);
+        setTheme(themeRes());
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(look.statusBar);
+    }
+
+    /** The window theme. Pop-up screens override this to stay see-through. */
+    protected int themeRes() {
+        return look.styleRes;
     }
 
     @Override

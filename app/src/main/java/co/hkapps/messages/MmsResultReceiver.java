@@ -23,7 +23,8 @@ public class MmsResultReceiver extends BroadcastReceiver {
         new Thread(() -> {
             try {
                 if (ACTION_SENT.equals(action)) {
-                    Mms.markSent(app, intent.getData(), resultCode == Activity.RESULT_OK);
+                    Mms.onSent(app, intent.getData(), resultCode == Activity.RESULT_OK,
+                            intent.getByteArrayExtra(android.telephony.SmsManager.EXTRA_MMS_DATA));
                     String path = intent.getStringExtra(Mms.EXTRA_FILE);
                     if (path != null) new File(path).delete();
                 } else if (ACTION_DOWNLOADED.equals(action)) {

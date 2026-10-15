@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. -->
+<full-backup-content>
+    <include domain="sharedpref" path="settings.xml" />
+    <include domain="sharedpref" path="chats.xml" />
+    <include domain="sharedpref" path="emoji.xml" />
+    <include domain="database" path="app.db" />
+</full-backup-content>

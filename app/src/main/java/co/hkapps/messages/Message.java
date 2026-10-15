@@ -10,6 +10,8 @@ public class Message {
 
     /** Type of a scheduled text. Real types match Telephony.Sms types and MMS message boxes. */
     public static final int TYPE_SCHEDULED = -1;
+    /** Type of a text waiting out the send delay. */
+    public static final int TYPE_DELAYED = -2;
 
     public final long id;
     public final boolean mms;
@@ -26,6 +28,21 @@ public class Message {
     public final List<Reactions.Entry> reactions = new ArrayList<>();
     /** Sender's name, filled in for received messages in group chats. */
     public String senderName;
+    /** SIM the message came in on or went out from, or -1. */
+    public int subId = -1;
+    /** Delivery report: STATUS_NONE, STATUS_PENDING, STATUS_DELIVERED or STATUS_FAILED. */
+    public int status = STATUS_NONE;
+    /** Locked messages are skipped by deletes and clean-up. */
+    public boolean locked;
+    /** When the sender's phone sent it (received messages), or 0. */
+    public long dateSent;
+    /** MMS size in bytes, or 0. */
+    public long size;
+
+    public static final int STATUS_NONE = -1;
+    public static final int STATUS_DELIVERED = 0;
+    public static final int STATUS_PENDING = 32;
+    public static final int STATUS_FAILED = 64;
 
     public Message(long id, boolean mms, long threadId, String address, String body, long date,
                    int type, boolean read) {
@@ -53,6 +70,20 @@ public class Message {
 
     public boolean scheduled() {
         return type == TYPE_SCHEDULED;
+    }
+
+    public boolean delayed() {
+        return type == TYPE_DELAYED;
+    }
+
+    /** Not a real message yet: scheduled or waiting out the send delay. */
+    public boolean notSentYet() {
+        return scheduled() || delayed();
+    }
+
+    /** Key used for undo-able deletes and selections: "sms:12" or "mms:7". */
+    public String key() {
+        return (mms ? "mms:" : "sms:") + id;
     }
 
     /** Short text for lists and notifications, like "Photo" for a picture with no caption. */

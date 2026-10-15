@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the app icon: "New message". Chats also show in other apps' share sheets. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="new_message"
+        android:shortcutShortLabel="@string/new_message">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="co.hkapps.messages.NewMessageActivity"
+            android:targetPackage="co.hkapps.messages" />
+    </shortcut>
+
+    <share-target android:targetClass="co.hkapps.messages.NewMessageActivity">
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="text/x-vcard" />
+        <data android:mimeType="text/calendar" />
+        <category android:name="co.hkapps.messages.SHARE_TARGET" />
+    </share-target>
+</shortcuts>

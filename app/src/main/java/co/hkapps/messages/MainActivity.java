@@ -2,11 +2,14 @@ package co.hkapps.messages;
 
 import android.Manifest;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.database.ContentObserver;
+import android.graphics.Bitmap;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -14,11 +17,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.view.ActionMode;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -28,20 +33,38 @@ import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** One row per SMS conversation. Pinned ones first, then newest first. */
+/** One row per conversation. Pinned ones first, then newest first. */
 public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
 
     private static final int REQUEST_PERMISSIONS = 1;
     private static final int MENU_SEARCH = 1;
     private static final int MENU_MARK_ALL_READ = 2;
     private static final int MENU_SETTINGS = 3;
+    private static final int MENU_KEEP = 4;
+    private static final int MENU_BLOCKLIST = 5;
+
+    /** Undo offered by another screen that closed right after deleting (a whole chat, say). */
+    private static List<String> undoKeys;
+    private static String undoLabel;
+
+    static void offerUndo(List<String> keys, String label) {
+        undoKeys = keys;
+        undoLabel = label;
+    }
+
+    private static final ExecutorService AVATARS = Executors.newFixedThreadPool(2);
 
     private final List<Conversation> conversations = new ArrayList<>();
     private final Set<Long> pinned = new HashSet<>();
+    private final Map<Long, String> drafts = new HashMap<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable reload = this::load;
     private final ContentObserver observer = new ContentObserver(handler) {
@@ -54,18 +77,20 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
     };
 
     private ConversationAdapter adapter;
+    private ListView list;
     private View banner;
     private TextView emptyText;
     private Button grantButton;
     private boolean openSettingsOnGrant;
     private boolean observing;
+    private ActionMode actionMode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        ListView list = findViewById(R.id.list);
+        list = findViewById(R.id.list);
         banner = findViewById(R.id.banner);
         emptyText = findViewById(R.id.empty_text);
         grantButton = findViewById(R.id.grant);
@@ -73,11 +98,9 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         adapter = new ConversationAdapter();
         list.setAdapter(adapter);
         list.setEmptyView(findViewById(R.id.empty));
+        list.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE_MODAL);
+        list.setMultiChoiceModeListener(new SelectionMode());
         list.setOnItemClickListener((parent, view, position, id) -> openThread(conversations.get(position)));
-        list.setOnItemLongClickListener((parent, view, position, id) -> {
-            showActions(conversations.get(position));
-            return true;
-        });
         new SwipeHelper(list, this);
 
         ImageButton fab = findViewById(R.id.fab);
@@ -97,6 +120,12 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         });
 
         if (!hasSmsPermission()) requestPermissions(permissions(), REQUEST_PERMISSIONS);
+
+        // Housekeeping: deletes whose undo ran out while the app was closed, clean-up, Quick Compose.
+        Context app = getApplicationContext();
+        SmsWriter.run(() -> Deleter.purgeDue(app));
+        Cleanup.schedule(app);
+        Notifier.updateQuickCompose(app);
     }
 
     @Override
@@ -106,6 +135,14 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         if (hasSmsPermission()) {
             startObserving();
             load();
+        }
+        if (undoKeys != null) {
+            List<String> keys = undoKeys;
+            UndoBar.show(this, look, undoLabel, () -> {
+                Deleter.undo(this, keys);
+                load();
+            });
+            undoKeys = null;
         }
     }
 
@@ -139,7 +176,9 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
                 .setIcon(R.drawable.ic_search)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         menu.add(0, MENU_MARK_ALL_READ, 1, R.string.mark_all_read);
-        menu.add(0, MENU_SETTINGS, 2, R.string.settings);
+        menu.add(0, MENU_KEEP, 2, "Keep (notes to self)");
+        menu.add(0, MENU_BLOCKLIST, 3, "Blocklisted");
+        menu.add(0, MENU_SETTINGS, 4, R.string.settings);
         return true;
     }
 
@@ -151,8 +190,17 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
                 return true;
             case MENU_MARK_ALL_READ:
                 if (requireDefault()) {
-                    SmsWriter.run(() -> SmsWriter.markAllRead(getApplicationContext()));
+                    Context app = getApplicationContext();
+                    SmsWriter.run(() -> SmsWriter.markAllRead(app));
+                    Notifier.cancelAllMessages(app);
+                    Toast.makeText(this, "Marked all as read", Toast.LENGTH_SHORT).show();
                 }
+                return true;
+            case MENU_KEEP:
+                startActivity(new Intent(this, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_THREAD_ID, Keep.THREAD_ID));
+                return true;
+            case MENU_BLOCKLIST:
+                startActivity(new Intent(this, BlocklistActivity.class));
                 return true;
             case MENU_SETTINGS:
                 startActivity(new Intent(this, SettingsActivity.class));
@@ -169,13 +217,14 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
 
     @Override
     public void onSwipeLeft(int position) {
-        if (position < conversations.size()) confirmDelete(conversations.get(position));
+        if (position < conversations.size()) delete(Collections.singletonList(conversations.get(position)));
     }
 
     private String[] permissions() {
         List<String> list = new ArrayList<>();
         list.add(Manifest.permission.READ_SMS);
         list.add(Manifest.permission.READ_CONTACTS);
+        list.add(Manifest.permission.READ_PHONE_STATE);
         if (Build.VERSION.SDK_INT >= 33) list.add(Manifest.permission.POST_NOTIFICATIONS);
         return list.toArray(new String[0]);
     }
@@ -197,13 +246,21 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
 
         executor.execute(() -> {
             List<Conversation> all = new MessageReader(this).loadConversations();
+            Set<String> hidden = Deleter.pending(this);
+            Map<Long, String> draftMap = AppDb.get(this).drafts();
             List<Conversation> visible = new ArrayList<>();
             Set<Long> pins = new HashSet<>();
             for (Conversation c : all) {
-                // Blocking applies to 1-to-1 chats; groups stay visible.
-                if (!c.isGroup() && Prefs.isBlocked(this, c.address())) continue;
+                if (hidden.contains("thread:" + c.threadId)) continue;
+                if (Prefs.isBlocked(this, c.addresses)) continue;
                 if (Prefs.isPinned(this, c.threadId)) pins.add(c.threadId);
                 visible.add(c);
+            }
+            // The Keep chat sits with the pinned chats once it has something in it.
+            Message keepLatest = Keep.latest(this);
+            if (keepLatest != null) {
+                visible.add(0, new Conversation(Keep.THREAD_ID, Collections.<String>emptyList(), Keep.NAME, keepLatest, 0));
+                pins.add(Keep.THREAD_ID);
             }
             // Stable sort: pinned rows move up, everything keeps its date order.
             Collections.sort(visible, (a, b) ->
@@ -214,6 +271,8 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
                 conversations.addAll(visible);
                 pinned.clear();
                 pinned.addAll(pins);
+                drafts.clear();
+                drafts.putAll(draftMap);
                 adapter.notifyDataSetChanged();
                 if (visible.isEmpty()) emptyText.setText(R.string.no_messages);
             });
@@ -225,76 +284,148 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
                 .putExtra(ThreadActivity.EXTRA_THREAD_ID, c.threadId));
     }
 
-    private void showActions(Conversation sms) {
-        boolean isPinned = pinned.contains(sms.threadId);
-        List<String> labels = new ArrayList<>();
-        List<Runnable> actions = new ArrayList<>();
-
-        labels.add(getString(isPinned ? R.string.unpin : R.string.pin));
-        actions.add(() -> {
-            Prefs.setPinned(this, sms.threadId, !isPinned);
-            load();
-        });
-        if (sms.unreadCount > 0) {
-            labels.add(getString(R.string.mark_read));
-            actions.add(() -> {
-                if (requireDefault()) {
-                    SmsWriter.run(() -> SmsWriter.markRead(getApplicationContext(), sms.threadId));
-                    Notifier.cancel(this, sms.threadId);
-                }
-            });
-        }
-        if (!sms.isGroup()) {
-            labels.add(getString(R.string.call));
-            actions.add(() -> call(sms));
-            labels.add(getString(R.string.block));
-            actions.add(() -> confirmBlock(sms));
-        }
-        labels.add(getString(R.string.delete));
-        actions.add(() -> confirmDelete(sms));
-
-        new AlertDialog.Builder(this)
-                .setTitle(sms.name)
-                .setItems(labels.toArray(new String[0]), (d, which) -> actions.get(which).run())
-                .show();
-    }
-
     private void call(Conversation c) {
-        if (c.isGroup()) {
+        if (c.isGroup() || Keep.is(c.threadId)) {
             Toast.makeText(this, "Can't call a group", Toast.LENGTH_SHORT).show();
             return;
         }
         startActivity(new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", c.address(), null)));
     }
 
-    private void confirmBlock(Conversation sms) {
-        new AlertDialog.Builder(this)
-                .setTitle("Block " + sms.name + "?")
-                .setMessage("This conversation will be hidden and new texts from this number "
-                        + "won't notify you. Nothing gets deleted; unblock any time in Settings.")
-                .setPositiveButton(R.string.block, (d, w) -> {
-                    Prefs.setBlocked(this, sms.address(), true);
-                    Notifier.cancel(this, sms.threadId);
-                    Toast.makeText(this, "Blocked " + sms.name, Toast.LENGTH_SHORT).show();
-                    load();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+    /** Deletes with a 20 second undo, like Textra. */
+    private void delete(List<Conversation> picked) {
+        if (!requireDefault()) return;
+        List<String> keys = new ArrayList<>();
+        for (Conversation c : picked) {
+            if (Keep.is(c.threadId)) continue;
+            keys.add("thread:" + c.threadId);
+            Notifier.cancel(this, c.threadId);
+        }
+        if (keys.isEmpty()) return;
+        Deleter.schedule(this, keys);
+        load();
+        UndoBar.show(this, look, keys.size() == 1 ? "Chat deleted" : keys.size() + " chats deleted", () -> {
+            Deleter.undo(this, keys);
+            load();
+        });
     }
 
-    private void confirmDelete(Conversation sms) {
-        if (!requireDefault()) return;
-        new AlertDialog.Builder(this)
-                .setTitle("Delete conversation?")
-                .setMessage("All messages with " + sms.name + " will be deleted.")
-                .setPositiveButton(R.string.delete, (d, w) -> {
-                    Prefs.setPinned(this, sms.threadId, false);
-                    Notifier.cancel(this, sms.threadId);
-                    for (Scheduler.Item s : Scheduler.forThread(this, sms.threadId)) Scheduler.cancel(this, s.id);
-                    SmsWriter.run(() -> SmsWriter.deleteThread(getApplicationContext(), sms.threadId));
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+    private List<Conversation> checked() {
+        List<Conversation> picked = new ArrayList<>();
+        android.util.SparseBooleanArray c = list.getCheckedItemPositions();
+        for (int i = 0; i < c.size(); i++) {
+            if (c.valueAt(i) && c.keyAt(i) < conversations.size()) picked.add(conversations.get(c.keyAt(i)));
+        }
+        return picked;
+    }
+
+    /** Long-press in the chat list: select chats, then act on all of them. */
+    private class SelectionMode implements AbsListView.MultiChoiceModeListener {
+        private static final int DELETE = 1, PIN = 2, READ = 3, UNREAD = 4, MUTE = 5, BLOCK = 6, ALL = 7, CUSTOMIZE = 8;
+
+        @Override
+        public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+            actionMode = mode;
+            menu.add(0, DELETE, 0, R.string.delete).setIcon(R.drawable.ic_delete).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+            menu.add(0, PIN, 1, R.string.pin).setIcon(R.drawable.ic_pin).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            menu.add(0, READ, 2, R.string.mark_read).setIcon(R.drawable.ic_check).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            menu.add(0, UNREAD, 3, R.string.mark_unread);
+            menu.add(0, MUTE, 4, "Turn notifications off");
+            menu.add(0, BLOCK, 5, "Blocklist");
+            menu.add(0, CUSTOMIZE, 6, R.string.customize);
+            menu.add(0, ALL, 7, "Select all");
+            return true;
+        }
+
+        @Override
+        public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
+            List<Conversation> picked = checked();
+            boolean allPinned = !picked.isEmpty();
+            boolean allMuted = !picked.isEmpty();
+            for (Conversation c : picked) {
+                if (!pinned.contains(c.threadId)) allPinned = false;
+                if (!ChatPrefs.muted(MainActivity.this, c.threadId)) allMuted = false;
+            }
+            menu.findItem(PIN).setTitle(allPinned ? R.string.unpin : R.string.pin);
+            menu.findItem(MUTE).setTitle(allMuted ? "Turn notifications on" : "Turn notifications off");
+            menu.findItem(CUSTOMIZE).setVisible(picked.size() == 1 && !Keep.is(picked.get(0).threadId));
+            return true;
+        }
+
+        @Override
+        public void onItemCheckedStateChanged(ActionMode mode, int position, long id, boolean checked) {
+            int n = list.getCheckedItemCount();
+            mode.setTitle(n == 1 ? "1 selected" : n + " selected");
+            mode.invalidate();
+            adapter.notifyDataSetChanged();
+        }
+
+        @Override
+        public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+            List<Conversation> picked = checked();
+            Context app = getApplicationContext();
+            switch (item.getItemId()) {
+                case DELETE:
+                    delete(picked);
+                    break;
+                case PIN: {
+                    boolean pin = item.getTitle().toString().equals(getString(R.string.pin));
+                    for (Conversation c : picked) if (!Keep.is(c.threadId)) Prefs.setPinned(app, c.threadId, pin);
+                    Toast.makeText(app, pin ? "Pinned to top of chat list." : "Un-pinned.", Toast.LENGTH_SHORT).show();
+                    load();
+                    break;
+                }
+                case READ:
+                    if (!requireDefault()) return true;
+                    SmsWriter.run(() -> {
+                        for (Conversation c : picked) SmsWriter.markRead(app, c.threadId);
+                    });
+                    for (Conversation c : picked) Notifier.cancel(app, c.threadId);
+                    break;
+                case UNREAD:
+                    if (!requireDefault()) return true;
+                    SmsWriter.run(() -> {
+                        for (Conversation c : picked) if (!Keep.is(c.threadId)) SmsWriter.markUnread(app, c.threadId);
+                    });
+                    break;
+                case MUTE: {
+                    boolean mute = item.getTitle().toString().endsWith("off");
+                    for (Conversation c : picked) {
+                        if (!Keep.is(c.threadId)) ChatPrefs.put(app, c.threadId, Prefs.NOTIFY, mute ? Boolean.FALSE : null);
+                    }
+                    Toast.makeText(app, mute ? "Muted." : "Un-muted.", Toast.LENGTH_SHORT).show();
+                    adapter.notifyDataSetChanged();
+                    break;
+                }
+                case BLOCK:
+                    for (Conversation c : picked) {
+                        for (String a : c.addresses) Prefs.setBlocked(app, a, true);
+                        Notifier.cancel(app, c.threadId);
+                    }
+                    Toast.makeText(app, "Blocklisted. See Settings > Blocklist to un-blocklist", Toast.LENGTH_LONG).show();
+                    load();
+                    break;
+                case CUSTOMIZE:
+                    if (!picked.isEmpty()) {
+                        startActivity(new Intent(MainActivity.this, ChatSettingsActivity.class)
+                                .putExtra(ThreadActivity.EXTRA_THREAD_ID, picked.get(0).threadId));
+                    }
+                    break;
+                case ALL:
+                    for (int i = 0; i < conversations.size(); i++) list.setItemChecked(i, true);
+                    return true;
+                default:
+                    return false;
+            }
+            mode.finish();
+            return true;
+        }
+
+        @Override
+        public void onDestroyActionMode(ActionMode mode) {
+            actionMode = null;
+            adapter.notifyDataSetChanged();
+        }
     }
 
     private class ConversationAdapter extends BaseAdapter {
@@ -308,10 +439,65 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
                     : LayoutInflater.from(parent.getContext())
                             .inflate(R.layout.item_conversation, parent, false);
             Conversation c = getItem(position);
-            bindConversation(view, look, c.name, c.address(), c.isGroup(), c.latest, c.unreadCount,
+            String title = Keep.is(c.threadId) ? Keep.NAME : ChatPrefs.name(MainActivity.this, c.threadId);
+            if (title == null) title = c.name;
+            bindConversation(view, look, title, c.address(), c.isGroup(), c.latest, c.unreadCount,
                     pinned.contains(c.threadId));
+            boolean muted = !Keep.is(c.threadId) && ChatPrefs.muted(MainActivity.this, c.threadId);
+            view.findViewById(R.id.muted).setVisibility(muted ? View.VISIBLE : View.GONE);
+            String draft = drafts.get(c.threadId);
+            if (draft != null) {
+                TextView snippet = view.findViewById(R.id.snippet);
+                android.text.SpannableString s = new android.text.SpannableString("Draft: " + draft);
+                s.setSpan(new android.text.style.ForegroundColorSpan(getColor(R.color.failed)), 0, 6, 0);
+                snippet.setText(s);
+            }
+            if (Keep.is(c.threadId)) {
+                TextView avatar = view.findViewById(R.id.avatar);
+                avatar.setText("📌");
+                avatar.setBackground(Look.circle(look.accent));
+            } else {
+                loadPhoto(view.findViewById(R.id.avatar), c, title);
+            }
+            boolean checked = list.isItemChecked(position);
+            view.findViewById(R.id.content).setBackgroundColor(checked ? blend(look.accent)
+                    : resolveBackground());
             return view;
         }
+    }
+
+    private int resolveBackground() {
+        android.util.TypedValue tv = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.colorBackground, tv, true);
+        return tv.data;
+    }
+
+    private int blend(int accent) {
+        int bg = resolveBackground();
+        float a = 0.2f;
+        int r = (int) (((accent >> 16) & 0xFF) * a + ((bg >> 16) & 0xFF) * (1 - a));
+        int g = (int) (((accent >> 8) & 0xFF) * a + ((bg >> 8) & 0xFF) * (1 - a));
+        int b = (int) ((accent & 0xFF) * a + (bg & 0xFF) * (1 - a));
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
+    }
+
+    /** Contact pictures load in the background and replace the letter avatar. */
+    private void loadPhoto(TextView avatar, Conversation c, String title) {
+        if (c.isGroup()) return;
+        String address = c.address();
+        avatar.setTag(address);
+        int size = (int) Format.dp(this, 48);
+        int color = Look.chatAccent(this, c.threadId, c.addresses);
+        int bg = color != 0 ? color : Look.avatarColor(address);
+        Context app = getApplicationContext();
+        AVATARS.execute(() -> {
+            Bitmap b = Avatars.get(app, address, title, size, bg);
+            avatar.post(() -> {
+                if (!address.equals(avatar.getTag())) return;
+                avatar.setText("");
+                avatar.setBackground(new BitmapDrawable(getResources(), b));
+            });
+        });
     }
 
     /** Fills one conversation row. Also used by search results. */
@@ -327,27 +513,37 @@ public class MainActivity extends BaseActivity implements SwipeHelper.Callback {
         TextView snippet = view.findViewById(R.id.snippet);
         TextView badge = view.findViewById(R.id.badge);
 
+        avatar.setTag(null);
         avatar.setBackground(Look.circle(Look.avatarColor(group ? title : address)));
         avatar.setText(group ? "👥" : Format.initial(title));
         name.setText(title);
+        name.setTypeface(look.typeface());
         date.setText(Format.shortDate(view.getContext(), latest.date));
 
         String prefix;
         if (latest.incoming()) {
             prefix = group && latest.senderName != null ? latest.senderName + ": " : "";
+        } else if (latest.failed()) {
+            prefix = "Not sent: ";
+        } else if (latest.sending()) {
+            prefix = "Sending: ";
+        } else if (latest.threadId == Keep.THREAD_ID) {
+            prefix = "";
         } else {
-            prefix = latest.failed() ? "Not sent: " : "You: ";
+            prefix = "You: ";
         }
         snippet.setText(prefix + latest.preview());
 
         boolean unread = unreadCount > 0;
-        name.setTypeface(null, unread ? Typeface.BOLD : Typeface.NORMAL);
+        name.setTypeface(look.typeface(), unread ? Typeface.BOLD : Typeface.NORMAL);
         snippet.setTypeface(null, unread ? Typeface.BOLD : Typeface.NORMAL);
         date.setTypeface(null, unread ? Typeface.BOLD : Typeface.NORMAL);
         // The snippet always uses the secondary text color, so borrow it for read rows.
         if (unread) date.setTextColor(look.accent); else date.setTextColor(snippet.getTextColors());
 
         view.findViewById(R.id.pin).setVisibility(isPinned ? View.VISIBLE : View.GONE);
+        View muted = view.findViewById(R.id.muted);
+        if (muted != null) muted.setVisibility(View.GONE);
         badge.setVisibility(unread ? View.VISIBLE : View.GONE);
         if (unread) {
             badge.setText(unreadCount > 99 ? "99+" : String.valueOf(unreadCount));

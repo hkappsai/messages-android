@@ -49,7 +49,9 @@ public final class MediaPrep {
             }
             // Too big, or a format other phones may not show (HEIC, WebP): send a JPEG.
             // A GIF that's too big loses its animation here.
-            return new Attachment("image/jpeg", baseName(name) + ".jpg", compress(context, uri, maxBytes));
+            Attachment shrunk = new Attachment("image/jpeg", baseName(name) + ".jpg", compress(context, uri, maxBytes));
+            shrunk.original = new Attachment(type, name, data);
+            return shrunk;
         }
         if (data.length > maxBytes) {
             throw new TooLargeException("This file is " + (data.length / 1024) + " KB. Your carrier allows "

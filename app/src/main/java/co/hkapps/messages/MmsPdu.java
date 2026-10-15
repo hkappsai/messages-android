@@ -18,6 +18,11 @@ public final class MmsPdu {
     public static final int TYPE_NOTIFICATION_IND = 0x82;
     public static final int TYPE_NOTIFYRESP_IND = 0x83;
     public static final int TYPE_RETRIEVE_CONF = 0x84;
+    public static final int TYPE_DELIVERY_IND = 0x86;
+    /** X-Mms-Status values in a delivery report. */
+    public static final int STATUS_EXPIRED = 0x80;
+    public static final int STATUS_RETRIEVED = 0x81;
+    public static final int STATUS_REJECTED = 0x82;
 
     // Header field codes, already OR-ed with 0x80.
     private static final int H_BCC = 0x81;
@@ -123,6 +128,8 @@ public final class MmsPdu {
         public long date;
         public long size;
         public int responseStatus;
+        /** X-Mms-Status of a delivery report. */
+        public int status;
         public String contentType;
         public final List<Part> parts = new ArrayList<>();
     }
@@ -132,6 +139,12 @@ public final class MmsPdu {
     /** Builds an m-send-req: the message handed to the carrier for sending. */
     public static byte[] encodeSendReq(String transactionId, List<String> recipients, String subject,
                                        List<Part> parts, long dateSeconds) {
+        return encodeSendReq(transactionId, recipients, subject, parts, dateSeconds, false);
+    }
+
+    /** With deliveryReport, the carrier sends an m-delivery-ind once each person gets it. */
+    public static byte[] encodeSendReq(String transactionId, List<String> recipients, String subject,
+                                       List<Part> parts, long dateSeconds, boolean deliveryReport) {
         Writer w = new Writer();
         w.octet(H_MESSAGE_TYPE).octet(TYPE_SEND_REQ);
         w.octet(H_TRANSACTION_ID).text(transactionId);
@@ -147,7 +160,7 @@ public final class MmsPdu {
         }
         w.octet(H_MESSAGE_CLASS).octet(0x80);     // personal
         w.octet(H_PRIORITY).octet(0x81);          // normal
-        w.octet(H_DELIVERY_REPORT).octet(0x81);   // no
+        w.octet(H_DELIVERY_REPORT).octet(deliveryReport ? 0x80 : 0x81);
         w.octet(H_READ_REPORT).octet(0x81);       // no
 
         // Content-Type: multipart/related, pointing at the SMIL part when there is one.
@@ -326,6 +339,7 @@ public final class MmsPdu {
                     case H_DATE: m.date = r.longInteger(); break;
                     case H_MESSAGE_SIZE: m.size = r.longInteger(); break;
                     case H_RESPONSE_STATUS: m.responseStatus = r.next(); break;
+                    case H_STATUS: m.status = r.next(); break;
                     default: r.skipValue(); break;
                 }
             }

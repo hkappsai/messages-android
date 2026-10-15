@@ -32,6 +32,10 @@ public class MessageReader {
             Telephony.Sms.DATE,
             Telephony.Sms.TYPE,
             Telephony.Sms.READ,
+            Telephony.Sms.SUBSCRIPTION_ID,
+            Telephony.Sms.STATUS,
+            Telephony.Sms.LOCKED,
+            Telephony.Sms.DATE_SENT,
     };
     private static final String SMS_NOT_DRAFT =
             Telephony.Sms.TYPE + " != " + Telephony.Sms.MESSAGE_TYPE_DRAFT;
@@ -42,6 +46,12 @@ public class MessageReader {
             Telephony.Mms.DATE,
             Telephony.Mms.MESSAGE_BOX,
             Telephony.Mms.READ,
+            Telephony.Mms.SUBSCRIPTION_ID,
+            Telephony.Mms.LOCKED,
+            Telephony.Mms.STATUS,
+            Telephony.Mms.MESSAGE_SIZE,
+            Telephony.Mms.DATE_SENT,
+            Telephony.Mms.DELIVERY_REPORT,
     };
     // 128 = sent message, 132 = received message. Leaves out drafts and download notices.
     private static final String MMS_REAL = Telephony.Mms.MESSAGE_TYPE + " IN (128, 132) AND "
@@ -205,6 +215,125 @@ public class MessageReader {
         return result;
     }
 
+    /** Locked messages in every chat, newest first. */
+    public List<Message> locked() {
+        List<Message> result = new ArrayList<>();
+        Cursor c = resolver.query(Telephony.Sms.CONTENT_URI, SMS_PROJECTION,
+                Telephony.Sms.LOCKED + " = 1 AND " + SMS_NOT_DRAFT, null, Telephony.Sms.DATE + " DESC");
+        if (c != null) {
+            try {
+                while (c.moveToNext()) result.add(smsFromCursor(c));
+            } finally {
+                c.close();
+            }
+        }
+        List<Message> mms = new ArrayList<>();
+        c = query(Telephony.Mms.CONTENT_URI, MMS_PROJECTION, Telephony.Mms.LOCKED + " = 1 AND " + MMS_REAL,
+                null, null);
+        if (c != null) {
+            try {
+                while (c.moveToNext()) mms.add(mmsFromCursor(c, null, ""));
+            } finally {
+                c.close();
+            }
+        }
+        result.addAll(fillMms(mms));
+        Collections.sort(result, (a, b) -> Long.compare(b.date, a.date));
+        for (Message m : result) {
+            m.senderName = m.address.isEmpty() ? names(recipientsOf(m.threadId)) : lookupName(m.address);
+        }
+        return result;
+    }
+
+    /** Received messages not read yet in one chat, oldest first, at most limit of them. */
+    public List<Message> unreadIn(long threadId, int limit) {
+        String[] args = {String.valueOf(threadId)};
+        List<Message> result = new ArrayList<>();
+        Cursor c = resolver.query(Telephony.Sms.CONTENT_URI, SMS_PROJECTION,
+                Telephony.Sms.THREAD_ID + " = ? AND " + Telephony.Sms.READ + " = 0 AND "
+                        + Telephony.Sms.TYPE + " = " + Telephony.Sms.MESSAGE_TYPE_INBOX,
+                args, Telephony.Sms.DATE + " DESC");
+        if (c != null) {
+            try {
+                while (c.moveToNext() && result.size() < limit) result.add(smsFromCursor(c));
+            } finally {
+                c.close();
+            }
+        }
+        List<Message> mms = new ArrayList<>();
+        c = query(Telephony.Mms.CONTENT_URI, MMS_PROJECTION, Telephony.Mms.THREAD_ID + " = ? AND "
+                + Telephony.Mms.READ + " = 0 AND " + Telephony.Mms.MESSAGE_BOX + " = "
+                + Telephony.Mms.MESSAGE_BOX_INBOX + " AND " + MMS_REAL, args, Telephony.Mms.DATE + " DESC");
+        if (c != null) {
+            try {
+                while (c.moveToNext() && mms.size() < limit) mms.add(mmsFromCursor(c, null, ""));
+            } finally {
+                c.close();
+            }
+        }
+        result.addAll(fillMms(mms));
+        Collections.sort(result, (a, b) -> Long.compare(a.date, b.date));
+        while (result.size() > limit) result.remove(0);
+        for (Message m : result) m.senderName = lookupName(m.address);
+        return result;
+    }
+
+    /** Pictures, videos and other files in a chat, newest first. */
+    public List<Message> media(long threadId) {
+        List<Message> mms = new ArrayList<>();
+        Cursor c = query(Telephony.Mms.CONTENT_URI, MMS_PROJECTION,
+                Telephony.Mms.THREAD_ID + " = ? AND " + MMS_REAL, new String[]{String.valueOf(threadId)},
+                Telephony.Mms.DATE + " DESC");
+        if (c != null) {
+            try {
+                while (c.moveToNext()) mms.add(mmsFromCursor(c, null, ""));
+            } finally {
+                c.close();
+            }
+        }
+        List<Message> result = new ArrayList<>();
+        for (Message m : fillMms(mms)) {
+            if (!m.parts.isEmpty()) result.add(m);
+        }
+        Collections.sort(result, (a, b) -> Long.compare(b.date, a.date));
+        return result;
+    }
+
+    /** True when the number or sender id belongs to someone in the address book. */
+    public boolean isContact(String address) {
+        if (TextUtils.isEmpty(address) || context.checkSelfPermission(Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) return false;
+        Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(address));
+        try (Cursor c = resolver.query(uri, new String[]{ContactsContract.PhoneLookup._ID}, null, null, null)) {
+            return c != null && c.moveToFirst();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** One message by provider id, with its parts. */
+    public Message message(boolean mms, long id) {
+        if (!mms) {
+            try (Cursor c = resolver.query(Telephony.Sms.CONTENT_URI, SMS_PROJECTION,
+                    Telephony.Sms._ID + " = " + id, null, null)) {
+                return c != null && c.moveToFirst() ? smsFromCursor(c) : null;
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+        List<Message> rows = new ArrayList<>();
+        Cursor c = query(Telephony.Mms.CONTENT_URI, MMS_PROJECTION, Telephony.Mms._ID + " = " + id, null, null);
+        if (c != null) {
+            try {
+                if (c.moveToFirst()) rows.add(mmsFromCursor(c, null, ""));
+            } finally {
+                c.close();
+            }
+        }
+        List<Message> full = fillMms(rows);
+        return full.isEmpty() ? null : full.get(0);
+    }
+
     // ------------------------------------------------------------ recipients
 
     /** Phone numbers in a conversation (more than one for a group). */
@@ -312,6 +441,11 @@ public class MessageReader {
             String sender = row.incoming() ? senderOf(row.id) : "";
             Message full = new Message(row.id, true, row.threadId, sender,
                     sb == null ? "" : sb.toString(), row.date, row.type, row.read);
+            full.subId = row.subId;
+            full.locked = row.locked;
+            full.status = row.status;
+            full.size = row.size;
+            full.dateSent = row.dateSent;
             List<Part> p = parts.get(row.id);
             if (p != null) full.parts.addAll(p);
             result.add(full);
@@ -414,13 +548,34 @@ public class MessageReader {
     }
 
     private static Message smsFromCursor(Cursor c) {
-        return new Message(c.getLong(0), false, c.getLong(1), c.getString(2), c.getString(3),
+        Message m = new Message(c.getLong(0), false, c.getLong(1), c.getString(2), c.getString(3),
                 c.getLong(4), c.getInt(5), c.getInt(6) != 0);
+        m.subId = c.isNull(7) ? -1 : c.getInt(7);
+        // -1 means no report was asked for; 0 delivered; 32 waiting; 64 and up failed.
+        int st = c.isNull(8) ? -1 : c.getInt(8);
+        m.status = st < 0 ? Message.STATUS_NONE : st >= 64 ? Message.STATUS_FAILED
+                : st >= 32 ? Message.STATUS_PENDING : Message.STATUS_DELIVERED;
+        m.locked = c.getInt(9) != 0;
+        m.dateSent = c.getLong(10);
+        return m;
     }
 
     /** MMS dates are in seconds; everything else in this app uses milliseconds. */
     private static Message mmsFromCursor(Cursor c, String address, String body) {
-        return new Message(c.getLong(0), true, c.getLong(1), address, body,
+        Message m = new Message(c.getLong(0), true, c.getLong(1), address, body,
                 c.getLong(2) * 1000, c.getInt(3), c.getInt(4) != 0);
+        m.subId = c.isNull(5) ? -1 : c.getInt(5);
+        m.locked = c.getInt(6) != 0;
+        m.size = c.getLong(8);
+        m.dateSent = c.getLong(9) * 1000;
+        // Delivery reports for sent MMS: asked for (d_rpt = yes), then the report's status.
+        boolean asked = !c.isNull(10) && c.getInt(10) == 0x80;
+        int st = c.isNull(7) ? 0 : c.getInt(7);
+        if (asked && m.type == Telephony.Mms.MESSAGE_BOX_SENT) {
+            m.status = st == MmsPdu.STATUS_RETRIEVED ? Message.STATUS_DELIVERED
+                    : st == MmsPdu.STATUS_EXPIRED || st == MmsPdu.STATUS_REJECTED ? Message.STATUS_FAILED
+                    : Message.STATUS_PENDING;
+        }
+        return m;
     }
 }

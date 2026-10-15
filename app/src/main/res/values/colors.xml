@@ -5,4 +5,11 @@
     <color name="swipe_delete">#E53935</color>
     <color name="failed">#E53935</color>
     <color name="dark_bg">#121212</color>
+    <color name="launcher_bg_purple">#8E24AA</color>
+    <color name="launcher_bg_pink">#D81B60</color>
+    <color name="launcher_bg_red">#E53935</color>
+    <color name="launcher_bg_orange">#F4511E</color>
+    <color name="launcher_bg_green">#43A047</color>
+    <color name="launcher_bg_teal">#00897B</color>
+    <color name="launcher_bg_black">#202124</color>
 </resources>

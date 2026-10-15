@@ -24,13 +24,15 @@ public class MmsFileProvider extends ContentProvider {
     static final String DIR_MMS = "mms";
     static final String DIR_SHARE = "share";
     static final String DIR_CAMERA = "camera";
+    /** Keep notes' files: in app storage, not the cache, so Android never clears them. */
+    static final String DIR_KEEP = "keep";
 
     static String authority(Context context) {
         return context.getPackageName() + ".files";
     }
 
     static File dir(Context context, String name) {
-        File dir = new File(context.getCacheDir(), name);
+        File dir = new File(name.equals(DIR_KEEP) ? context.getFilesDir() : context.getCacheDir(), name);
         if (!dir.exists()) dir.mkdirs();
         return dir;
     }
@@ -50,7 +52,8 @@ public class MmsFileProvider extends ContentProvider {
         if (segments.size() != 2) throw new FileNotFoundException(uri.toString());
         String folder = segments.get(0);
         String name = segments.get(1);
-        boolean knownFolder = folder.equals(DIR_MMS) || folder.equals(DIR_SHARE) || folder.equals(DIR_CAMERA);
+        boolean knownFolder = folder.equals(DIR_MMS) || folder.equals(DIR_SHARE) || folder.equals(DIR_CAMERA)
+                || folder.equals(DIR_KEEP);
         // Only plain file names inside our own folders, never paths that climb out.
         if (!knownFolder || name.contains("/") || name.contains("..")) {
             throw new FileNotFoundException(uri.toString());

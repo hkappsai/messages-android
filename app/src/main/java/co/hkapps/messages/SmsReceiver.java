@@ -35,20 +35,8 @@ public class SmsReceiver extends BroadcastReceiver {
         new Thread(() -> {
             try {
                 Uri row = SmsWriter.insertIncoming(app, address, text, sentAt, subId);
-                MessageReader reader = new MessageReader(app);
-                long threadId = reader.threadIdOf(row);
-
-                if (Prefs.isBlocked(app, address)) {
-                    // Kept, but hidden and silent. Unblocking brings the conversation back.
-                    return;
-                }
-                if (threadId != -1 && threadId == ThreadActivity.visibleThreadId) {
-                    // The user is looking at this conversation right now.
-                    SmsWriter.markRead(app, threadId);
-                    return;
-                }
-                Notifier.showMessage(app, threadId, Collections.singletonList(address),
-                        reader.lookupName(address), text);
+                long threadId = new MessageReader(app).threadIdOf(row);
+                Incoming.handle(app, threadId, Collections.singletonList(address), address, text, -1);
             } finally {
                 result.finish();
             }

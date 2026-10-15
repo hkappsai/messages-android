@@ -55,16 +55,24 @@ public final class Mms {
 
     // ------------------------------------------------------------ sending
 
-    /** Saves the message as "sending" and hands it to the phone's MMS service. */
     public static void send(Context context, List<String> recipients, String text, List<Attachment> files) {
+        send(context, recipients, text, files, -1, false);
+    }
+
+    /** Saves the message as "sending" and hands it to the phone's MMS service. */
+    public static void send(Context context, List<String> recipients, String text, List<Attachment> files,
+                            int subId, boolean deliveryReport) {
         long threadId = Telephony.Threads.getOrCreateThreadId(context, new HashSet<>(recipients));
         List<MmsPdu.Part> parts = buildParts(text, files);
         String transactionId = "T" + Long.toHexString(System.currentTimeMillis())
                 + Integer.toHexString(new Random().nextInt(0xFFFF));
 
-        Uri row = saveOutgoing(context, threadId, recipients, parts, transactionId);
+        // "Save storage space" off: keep the original files in the saved copy, send the small ones.
+        List<MmsPdu.Part> saved = parts;
+        if (!Prefs.bool(context, Prefs.SAVE_SPACE)) saved = buildParts(text, originals(files));
+        Uri row = saveOutgoing(context, threadId, recipients, saved, transactionId, subId, deliveryReport);
         byte[] pdu = MmsPdu.encodeSendReq(transactionId, recipients, null, parts,
-                System.currentTimeMillis() / 1000);
+                System.currentTimeMillis() / 1000, deliveryReport);
 
         File file = new File(MmsFileProvider.dir(context, MmsFileProvider.DIR_MMS),
                 "send-" + System.nanoTime() + ".pdu");
@@ -84,7 +92,7 @@ public final class Mms {
         PendingIntent sent = PendingIntent.getBroadcast(context, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         try {
-            SmsWriter.smsManager(context, -1).sendMultimediaMessage(context, contentUri, null, null, sent);
+            SmsWriter.smsManager(context, subId).sendMultimediaMessage(context, contentUri, null, null, sent);
         } catch (RuntimeException e) {
             markSent(context, row, false);
             file.delete();
@@ -101,11 +109,21 @@ public final class Mms {
         List<String> recipients = new MessageReader(context).recipientsOf(message.threadId);
         if (recipients.isEmpty()) return;
         SmsWriter.deleteMessage(context, message);
-        send(context, recipients, message.body, files);
+        send(context, recipients, message.body, files, message.subId,
+                ChatPrefs.bool(context, message.threadId, Prefs.DELIVERY_MMS));
     }
 
-    /** The carrier's MMS size limit in bytes. */
+    /** Files as picked, before shrinking, for "Save storage space" off. */
+    private static List<Attachment> originals(List<Attachment> files) {
+        List<Attachment> result = new ArrayList<>();
+        for (Attachment a : files) result.add(a.original != null ? a.original : a);
+        return result;
+    }
+
+    /** The MMS size limit in bytes: the user's choice in Settings, else the carrier's. */
     public static int maxMessageSize(Context context) {
+        int chosen = Prefs.integer(context, Prefs.MMS_LIMIT);
+        if (chosen > 0) return chosen * 1024;
         try {
             Bundle config = SmsWriter.smsManager(context, -1).getCarrierConfigValues();
             int max = config == null ? 0 : config.getInt(SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE, 0);
@@ -175,6 +193,10 @@ public final class Mms {
         } catch (IllegalArgumentException e) {
             return;
         }
+        if (notice.type == MmsPdu.TYPE_DELIVERY_IND) {
+            onDeliveryReport(context, notice);
+            return;
+        }
         if (notice.type != MmsPdu.TYPE_NOTIFICATION_IND || TextUtils.isEmpty(notice.contentLocation)) return;
         if (alreadySaved(context, notice.transactionId)) return;  // Carriers sometimes send it twice.
         download(context, notice.contentLocation, notice.transactionId, notice.from, subId);
@@ -242,30 +264,55 @@ public final class Mms {
         MessageReader reader = new MessageReader(context);
         long threadId = reader.threadIdOf(row);
         String from = m.from == null ? "" : m.from;
-        if (Prefs.isBlocked(context, from)) return;
-        if (threadId != -1 && threadId == ThreadActivity.visibleThreadId) {
-            SmsWriter.markRead(context, threadId);
-            return;
-        }
 
         String text = "";
         for (MmsPdu.Part p : m.parts) {
             if (p.contentType.equals("text/plain")) text = text.isEmpty() ? p.text() : text + "\n" + p.text();
         }
-        if (text.isEmpty()) {
-            for (MmsPdu.Part p : m.parts) {
-                if (!p.contentType.equals("application/smil")) {
-                    text = new Part(0, p.contentType, p.name).label();
-                    break;
-                }
+        String label = null;
+        for (MmsPdu.Part p : m.parts) {
+            if (!p.contentType.equals("application/smil") && !p.contentType.equals("text/plain")) {
+                label = new Part(0, p.contentType, p.name).label();
+                break;
             }
         }
+        if (text.isEmpty() && label != null) text = label;
         if (text.isEmpty() && m.subject != null) text = m.subject;
 
-        boolean group = recipients.size() > 1;
-        String title = group ? reader.names(recipients) : reader.lookupName(from);
-        if (group) text = MessageReader.firstName(reader.lookupName(from)) + ": " + text;
-        Notifier.showMessage(context, threadId, recipients, title, text);
+        Incoming.handle(context, threadId, recipients, from, text, ContentUris.parseId(row));
+    }
+
+    /** An MMS we sent reached someone (or expired): note it on the sent message. */
+    private static void onDeliveryReport(Context context, MmsPdu.Message report) {
+        if (TextUtils.isEmpty(report.messageId)) return;
+        DebugLog.log(context, "MMS delivery report " + report.status + " for " + report.messageId);
+        ContentValues v = new ContentValues();
+        v.put(Telephony.Mms.STATUS, report.status);
+        try {
+            context.getContentResolver().update(Telephony.Mms.CONTENT_URI, v,
+                    Telephony.Mms.MESSAGE_ID + " = ? AND " + Telephony.Mms.MESSAGE_BOX + " = "
+                            + Telephony.Mms.MESSAGE_BOX_SENT, new String[]{report.messageId});
+        } catch (RuntimeException ignored) {
+            // Not the default SMS app.
+        }
+    }
+
+    /**
+     * The carrier accepted a message: keep the Message-ID it gave, which delivery reports
+     * point back to.
+     */
+    static void onSent(Context context, Uri row, boolean ok, byte[] sendConf) {
+        markSent(context, row, ok);
+        if (!ok || sendConf == null || row == null || !"content".equals(row.getScheme())) return;
+        try {
+            MmsPdu.Message conf = MmsPdu.parse(sendConf);
+            if (TextUtils.isEmpty(conf.messageId)) return;
+            ContentValues v = new ContentValues();
+            v.put(Telephony.Mms.MESSAGE_ID, conf.messageId);
+            context.getContentResolver().update(row, v, null, null);
+        } catch (RuntimeException ignored) {
+            // Unreadable reply: the message is sent either way.
+        }
     }
 
     /** Some carriers want to hear that the message arrived, or they send it again. */
@@ -320,6 +367,8 @@ public final class Mms {
     @SuppressWarnings("deprecation")
     static List<String> selfNumbers(Context context) {
         List<String> numbers = new ArrayList<>();
+        String mine = Prefs.string(context, Prefs.MY_NUMBER);
+        if (!TextUtils.isEmpty(mine)) numbers.add(mine);
         try {
             TelephonyManager tm = context.getSystemService(TelephonyManager.class);
             String n = tm == null ? null : tm.getLine1Number();
@@ -387,8 +436,38 @@ public final class Mms {
         return row;
     }
 
+    /** Puts a message from a backup file back into the MMS store. Call off the main thread. */
+    static Uri saveRestored(Context context, List<String> recipients, String from, String text,
+                            List<Attachment> files, long dateMillis, int box, boolean read) {
+        long threadId = Telephony.Threads.getOrCreateThreadId(context, new HashSet<>(recipients));
+        boolean incoming = box == Telephony.Mms.MESSAGE_BOX_INBOX;
+        ContentValues v = new ContentValues();
+        v.put(Telephony.Mms.THREAD_ID, threadId);
+        v.put(Telephony.Mms.DATE, dateMillis / 1000);
+        v.put(Telephony.Mms.MESSAGE_BOX, box);
+        v.put(Telephony.Mms.READ, read ? 1 : 0);
+        v.put(Telephony.Mms.SEEN, 1);
+        v.put(Telephony.Mms.MESSAGE_TYPE, incoming ? MmsPdu.TYPE_RETRIEVE_CONF : MmsPdu.TYPE_SEND_REQ);
+        v.put(Telephony.Mms.MMS_VERSION, 0x12);
+        v.put(Telephony.Mms.CONTENT_TYPE, MmsPdu.MULTIPART_RELATED);
+        ContentResolver resolver = context.getContentResolver();
+        Uri row = resolver.insert(Telephony.Mms.CONTENT_URI, v);
+        if (row == null) return null;
+        long id = ContentUris.parseId(row);
+        if (incoming) {
+            saveAddress(resolver, id, from == null || from.isEmpty() ? recipients.get(0) : from, ADDR_FROM);
+            for (String to : recipients) if (!Prefs.sameAddress(to, from)) saveAddress(resolver, id, to, ADDR_TO);
+        } else {
+            saveAddress(resolver, id, "insert-address-token", ADDR_FROM);
+            for (String to : recipients) saveAddress(resolver, id, to, ADDR_TO);
+        }
+        saveParts(resolver, id, buildParts(text, files));
+        return row;
+    }
+
     private static Uri saveOutgoing(Context context, long threadId, List<String> recipients,
-                                    List<MmsPdu.Part> parts, String transactionId) {
+                                    List<MmsPdu.Part> parts, String transactionId, int subId,
+                                    boolean deliveryReport) {
         ContentValues v = new ContentValues();
         v.put(Telephony.Mms.THREAD_ID, threadId);
         v.put(Telephony.Mms.DATE, System.currentTimeMillis() / 1000);
@@ -402,7 +481,8 @@ public final class Mms {
         v.put(Telephony.Mms.MESSAGE_CLASS, "personal");
         v.put(Telephony.Mms.PRIORITY, 0x81);
         v.put(Telephony.Mms.READ_REPORT, 0x81);
-        v.put(Telephony.Mms.DELIVERY_REPORT, 0x81);
+        v.put(Telephony.Mms.DELIVERY_REPORT, deliveryReport ? 0x80 : 0x81);
+        if (subId >= 0) v.put(Telephony.Mms.SUBSCRIPTION_ID, subId);
 
         ContentResolver resolver = context.getContentResolver();
         Uri row;

@@ -74,6 +74,16 @@
                     android:textSize="16sp" />
 
                 <ImageView
+                    android:id="@+id/muted"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="6dp"
+                    android:contentDescription="@string/mute"
+                    android:src="@drawable/ic_mute"
+                    android:tint="?android:attr/textColorSecondary"
+                    android:visibility="gone" />
+
+                <ImageView
                     android:id="@+id/pin"
                     android:layout_width="16dp"
                     android:layout_height="16dp"

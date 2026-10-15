@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
 }
 
+// GIF search uses the Giphy web API. Put GIPHY_API_KEY=... in local.properties to turn it on.
+def localProps = new Properties()
+def localFile = rootProject.file('local.properties')
+if (localFile.exists()) localFile.withInputStream { localProps.load(it) }
+def giphyKey = localProps.getProperty('GIPHY_API_KEY', '')
+
 android {
     namespace 'co.hkapps.messages'
     compileSdk 34
@@ -10,8 +16,13 @@ android {
         applicationId 'co.hkapps.messages'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName "3.0"
+        versionCode 4
+        versionName "4.0"
+        buildConfigField "String", "GIPHY_API_KEY", "\"${giphyKey}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {
