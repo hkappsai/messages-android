@@ -78,6 +78,26 @@ Or with the Android SDK installed: `./gradlew assembleDebug`. The APK lands in
 
 Needs Android 8.0 (API 26) or newer.
 
+## Test on a phone
+
+With the phone plugged in over USB and USB debugging on:
+
+```
+scripts/test-on-device.sh
+```
+
+It builds, installs, makes Messages the default SMS app, grants permissions, opens the
+app, prints a test checklist and shows any crashes live. With several devices connected,
+pass the serial from `adb devices`.
+
+**Xiaomi / Redmi / POCO (MIUI and HyperOS)** need a few extra switches:
+
+- Developer options > **Install via USB**: on (asks for a Mi account and a SIM)
+- Developer options > **USB debugging (Security settings)**: on, so adb can grant permissions
+- App info > Messages > **Autostart**: on, or scheduled texts won't fire after a reboot
+- App info > Messages > Battery saver > **No restrictions**, so scheduled texts go out on time
+- App info > Messages > Other permissions: allow **Send MMS** and **Notification SMS** if listed
+
 ## Code
 
 | File | Job |
