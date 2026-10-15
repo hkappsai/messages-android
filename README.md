@@ -129,3 +129,9 @@ pass the serial from `adb devices`.
 | `BaseActivity.java`, `Look.java` | Applies the chosen theme to every screen |
 | `Prefs.java` | Saved settings, pins and blocked numbers |
 | `DefaultSms.java` | Checks and requests the default SMS role |
+
+## License
+
+Copyright 2026 HK Apps
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
