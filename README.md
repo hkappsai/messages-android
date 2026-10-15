@@ -1,6 +1,6 @@
 # Messages
 
-A messaging app for Android with features similar to Textra: SMS, MMS, group chats,
+A messaging app for Android with SMS, MMS, group chats,
 photos, GIFs, voice memos, reactions and scheduled texts. It uses only the Android
 framework: no AndroidX, no Kotlin, no third-party libraries. Even the MMS wire format
 is read and written by the app's own code (`MmsPdu.java`).
